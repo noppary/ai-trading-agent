@@ -75,11 +75,20 @@ CONFIG = {
     # Hyperliquid network/base URL overrides
     "hyperliquid_base_url": _get_env("HYPERLIQUID_BASE_URL"),
     "hyperliquid_network": _get_env("HYPERLIQUID_NETWORK", "mainnet"),
-    # LLM via OpenRouter
+    # LLM via OpenRouter (Stage 1 + Stage 2)
     "openrouter_api_key": _get_env("OPENROUTER_API_KEY", required=True),
     "openrouter_base_url": _get_env("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
     "openrouter_referer": _get_env("OPENROUTER_REFERER"),
     "openrouter_app_title": _get_env("OPENROUTER_APP_TITLE", "trading-agent"),
+    # Together AI (Stage 3 — trade decisions)
+    "together_api_key": _get_env("TOGETHER_API_KEY"),
+    "together_base_url": _get_env("TOGETHER_BASE_URL", "https://api.together.xyz/v1"),
+    # Multi-model pipeline
+    "stage1_model": _get_env("STAGE1_MODEL", "qwen/qwen3-8b"),            # Parse + normalize ($0.05/M)
+    "stage2_model": _get_env("STAGE2_MODEL", "qwen/qwen3-32b"),           # Signals + risk ($0.12/M)
+    "stage3_model": _get_env("STAGE3_MODEL", "moonshotai/kimi-k2.5"),     # Trade decisions (Together AI)
+    "stage3_provider": _get_env("STAGE3_PROVIDER", "together"),            # "together" or "openrouter"
+    # Legacy single-model (fallback)
     "llm_model": _get_env("LLM_MODEL", "x-ai/grok-4"),
     # Reasoning tokens
     "reasoning_enabled": _get_bool("REASONING_ENABLED", False),

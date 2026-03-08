@@ -5,7 +5,7 @@ import argparse
 import pathlib
 sys.path.append(str(pathlib.Path(__file__).parent.parent))
 from src.agent.decision_maker import TradingAgent
-from src.indicators.taapi_client import TAAPIClient
+from src.indicators.hyperliquid_indicators import HyperliquidIndicators
 from src.trading.hyperliquid_api import HyperliquidAPI
 import asyncio
 import logging
@@ -64,8 +64,8 @@ def main():
     if not args.assets or not args.interval:
         parser.error("Please provide --assets and --interval, or set ASSETS and INTERVAL in .env")
 
-    taapi = TAAPIClient()
     hyperliquid = HyperliquidAPI()
+    indicators = HyperliquidIndicators()
     agent = TradingAgent()
 
 
@@ -235,17 +235,17 @@ def main():
                     funding = await hyperliquid.get_funding_rate(asset)
 
                     intraday_tf = "5m"
-                    ema_series = taapi.fetch_series("ema", f"{asset}/USDT", intraday_tf, results=10, params={"period": 20}, value_key="value")
-                    macd_series = taapi.fetch_series("macd", f"{asset}/USDT", intraday_tf, results=10, value_key="valueMACD")
-                    rsi7_series = taapi.fetch_series("rsi", f"{asset}/USDT", intraday_tf, results=10, params={"period": 7}, value_key="value")
-                    rsi14_series = taapi.fetch_series("rsi", f"{asset}/USDT", intraday_tf, results=10, params={"period": 14}, value_key="value")
+                    ema_series = indicators.fetch_series("ema", asset, intraday_tf, results=10, params={"period": 20})
+                    macd_series = indicators.fetch_series("macd", asset, intraday_tf, results=10)
+                    rsi7_series = indicators.fetch_series("rsi", asset, intraday_tf, results=10, params={"period": 7})
+                    rsi14_series = indicators.fetch_series("rsi", asset, intraday_tf, results=10, params={"period": 14})
 
-                    lt_ema20 = taapi.fetch_value("ema", f"{asset}/USDT", "4h", params={"period": 20}, key="value")
-                    lt_ema50 = taapi.fetch_value("ema", f"{asset}/USDT", "4h", params={"period": 50}, key="value")
-                    lt_atr3 = taapi.fetch_value("atr", f"{asset}/USDT", "4h", params={"period": 3}, key="value")
-                    lt_atr14 = taapi.fetch_value("atr", f"{asset}/USDT", "4h", params={"period": 14}, key="value")
-                    lt_macd_series = taapi.fetch_series("macd", f"{asset}/USDT", "4h", results=10, value_key="valueMACD")
-                    lt_rsi_series = taapi.fetch_series("rsi", f"{asset}/USDT", "4h", results=10, params={"period": 14}, value_key="value")
+                    lt_ema20 = indicators.fetch_value("ema", asset, "4h", params={"period": 20})
+                    lt_ema50 = indicators.fetch_value("ema", asset, "4h", params={"period": 50})
+                    lt_atr3 = indicators.fetch_value("atr", asset, "4h", params={"period": 3})
+                    lt_atr14 = indicators.fetch_value("atr", asset, "4h", params={"period": 14})
+                    lt_macd_series = indicators.fetch_series("macd", asset, "4h", results=10)
+                    lt_rsi_series = indicators.fetch_series("rsi", asset, "4h", results=10, params={"period": 14})
 
                     recent_mids = [entry["mid"] for entry in list(price_history.get(asset, []))[-10:]]
                     funding_annualized = round(funding * 24 * 365 * 100, 2) if funding else None
@@ -533,20 +533,20 @@ def main():
         std = math.sqrt(var) if var > 0 else 0
         return mean / std if std > 0 else 0
 
-    async def check_exit_condition(trade, taapi, hyperliquid):
+    async def check_exit_condition(trade, indicators, hyperliquid):
         """Evaluate whether a given trade's exit plan triggers a close."""
         plan = (trade.get("exit_plan") or "").lower()
         if not plan:
             return False
         try:
             if "macd" in plan and "below" in plan:
-                macd = taapi.get_indicators(trade["asset"], "4h")["macd"]["valueMACD"]
+                macd = indicators.get_indicators(trade["asset"], "4h")["macd"].get("valueMACD")
                 threshold = float(plan.split("below")[-1].strip())
-                return macd < threshold
+                return macd is not None and macd < threshold
             if "close above ema50" in plan:
-                ema50 = taapi.get_historical_indicator("ema", f"{trade['asset']}/USDT", "4h", results=1, params={"period": 50})[0]["value"]
+                ema50 = indicators.fetch_value("ema", trade["asset"], "4h", params={"period": 50})
                 current = await hyperliquid.get_current_price(trade["asset"])
-                return current > ema50
+                return ema50 is not None and current > ema50
         except Exception:
             return False
         return False

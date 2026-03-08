@@ -75,6 +75,8 @@ CONFIG = {
     # Hyperliquid network/base URL overrides
     "hyperliquid_base_url": _get_env("HYPERLIQUID_BASE_URL"),
     "hyperliquid_network": _get_env("HYPERLIQUID_NETWORK", "mainnet"),
+    "hyperliquid_main_wallet": _get_env("HYPERLIQUID_MAIN_WALLET"),
+    "hyperliquid_api_wallet": _get_env("HYPERLIQUID_API_WALLET") or _get_env("HYPERLIQUID_WALLET_ADDRESS"),
     # LLM via OpenRouter (Stage 1 + Stage 2)
     "openrouter_api_key": _get_env("OPENROUTER_API_KEY", required=True),
     "openrouter_base_url": _get_env("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),

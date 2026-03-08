@@ -1,10 +1,16 @@
 """Client helper for interacting with the TAAPI technical analysis API."""
 
+import re
 import requests
 import os
 import time
 import logging
 from src.config_loader import CONFIG
+
+
+def _redact_url(text: str) -> str:
+    """Remove secret= query param value from URLs in log messages."""
+    return re.sub(r'(secret=)[^&\s]+', r'\1[REDACTED]', str(text))
 
 
 class TAAPIClient:
@@ -28,7 +34,7 @@ class TAAPIClient:
                     logging.warning(f"TAAPI {e.response.status_code}, retrying in {wait}s")
                     time.sleep(wait)
                 else:
-                    raise
+                    raise type(e)(_redact_url(e)) from None
             except requests.Timeout as e:
                 if attempt < retries - 1:
                     wait = backoff * (2 ** attempt)
@@ -101,7 +107,7 @@ class TAAPIClient:
             return []
         except Exception as e:
             import logging
-            logging.error(f"TAAPI fetch_series exception for {indicator}: {e}")
+            logging.error(f"TAAPI fetch_series exception for {indicator}: {_redact_url(e)}")
             return []
 
     def fetch_value(self, indicator: str, symbol: str, interval: str, params: dict | None = None, key: str = "value"):

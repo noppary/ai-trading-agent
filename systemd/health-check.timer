@@ -1,0 +1,12 @@
+[Unit]
+Description=Health Check — runs every 15 minutes
+Requires=health-check.service
+
+[Timer]
+OnBootSec=120
+OnUnitActiveSec=15min
+AccuracySec=30s
+Unit=health-check.service
+
+[Install]
+WantedBy=timers.target

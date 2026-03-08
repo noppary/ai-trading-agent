@@ -1,0 +1,19 @@
+[Unit]
+Description=AI Trading Agent (Hyperliquid)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/ai-trading-agent
+EnvironmentFile=/root/ai-trading-agent/.env
+ExecStart=/root/.local/bin/poetry run python src/main.py
+Restart=on-failure
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ai-trading-agent
+
+[Install]
+WantedBy=multi-user.target

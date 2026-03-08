@@ -1,0 +1,13 @@
+[Unit]
+Description=AI Trading Agent — Price Monitor (one-shot check)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/root/ai-trading-agent
+EnvironmentFile=/root/ai-trading-agent/.env
+ExecStart=/root/.local/bin/poetry run python scripts/price-monitor.py
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=price-monitor

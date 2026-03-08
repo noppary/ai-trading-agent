@@ -1,0 +1,17 @@
+[Unit]
+Description=AI Trading Agent — Health Check (one-shot)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/root/ai-trading-agent
+ExecStart=/bin/bash -c "\
+  echo '=== Health Check ===' && \
+  systemctl is-active ai-trading-agent && echo 'Bot: RUNNING' || echo 'Bot: STOPPED' && \
+  curl -sf http://localhost:3000/diary?limit=1 > /dev/null && echo 'HTTP API: OK' || echo 'HTTP API: DOWN' && \
+  tail -5 /root/ai-trading-agent/diary.jsonl 2>/dev/null || echo 'diary.jsonl: empty/missing' \
+"
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=health-check

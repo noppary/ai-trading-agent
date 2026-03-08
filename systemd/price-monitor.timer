@@ -1,0 +1,12 @@
+[Unit]
+Description=Price Monitor — runs every 5 minutes
+Requires=price-monitor.service
+
+[Timer]
+OnBootSec=60
+OnUnitActiveSec=5min
+AccuracySec=10s
+Unit=price-monitor.service
+
+[Install]
+WantedBy=timers.target

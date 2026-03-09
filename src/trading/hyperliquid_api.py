@@ -76,7 +76,7 @@ class HyperliquidAPI:
             s for s in raw_spot_meta["universe"]
             if s["tokens"][0] < token_count and s["tokens"][1] < token_count
         ]
-        self.info = Info(self.base_url, spot_meta=raw_spot_meta)
+        self.info = Info(self.base_url, skip_ws=True, spot_meta=raw_spot_meta)
         self.exchange = Exchange(self.wallet, self.base_url, spot_meta=raw_spot_meta)
 
     def _reset_clients(self):

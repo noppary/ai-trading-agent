@@ -7,11 +7,14 @@ Stage 3: Kimi K2.5  — Final trade decisions via Together AI  (213ms TTFT)
 
 import json
 import logging
+import concurrent.futures
 from datetime import datetime
 
 import requests
 
 from src.config_loader import CONFIG
+
+_STAGE3_TIMEOUT = 90  # hard wall-clock limit for Stage 3 (seconds)
 
 
 class TradingAgent:
@@ -74,9 +77,13 @@ class TradingAgent:
         return resp.json()
 
     def _post_stage3(self, payload: dict) -> dict:
-        if self.stage3_provider == "together":
-            return self._post_together(payload)
-        return self._post_openrouter(payload)
+        fn = self._post_together if self.stage3_provider == "together" else self._post_openrouter
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(fn, payload)
+            try:
+                return future.result(timeout=_STAGE3_TIMEOUT)
+            except concurrent.futures.TimeoutError:
+                raise TimeoutError(f"Stage 3 timed out after {_STAGE3_TIMEOUT}s")
 
     def _log_request(self, model: str, payload: dict):
         try:
@@ -271,6 +278,9 @@ class TradingAgent:
                     logging.warning("Stage 3: response_format rejected, retrying without")
                     continue
                 raise
+            except TimeoutError as e:
+                logging.error("Stage 3 timeout: %s — defaulting to hold", e)
+                break
             except (json.JSONDecodeError, KeyError) as e:
                 logging.error("Stage 3 parse error: %s", e)
                 if attempt == 0:

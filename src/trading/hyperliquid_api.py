@@ -67,8 +67,17 @@ class HyperliquidAPI:
 
     def _build_clients(self):
         """Instantiate exchange and info client instances for the active base URL."""
-        self.info = Info(self.base_url)
-        self.exchange = Exchange(self.wallet, self.base_url)
+        import requests as _requests
+        raw_spot_meta = _requests.post(
+            self.base_url + "/info", json={"type": "spotMeta"}, timeout=10
+        ).json()
+        token_count = len(raw_spot_meta["tokens"])
+        raw_spot_meta["universe"] = [
+            s for s in raw_spot_meta["universe"]
+            if s["tokens"][0] < token_count and s["tokens"][1] < token_count
+        ]
+        self.info = Info(self.base_url, spot_meta=raw_spot_meta)
+        self.exchange = Exchange(self.wallet, self.base_url, spot_meta=raw_spot_meta)
 
     def _reset_clients(self):
         """Recreate SDK clients after connection failures while logging failures."""

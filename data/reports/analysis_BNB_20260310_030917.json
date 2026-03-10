@@ -1,0 +1,23 @@
+{
+  "symbol": "BNB",
+  "batch": "20260310_030917",
+  "generated_at": "2026-03-10T03:09:17Z",
+  "latest_close_time": null,
+  "metrics": {
+    "trade_count": 0,
+    "win_rate": 0.0,
+    "avg_pnl_usd": 0.0,
+    "avg_pnl_pct": 0.0,
+    "total_pnl_usd": 0.0,
+    "best_trade": null,
+    "worst_trade": null,
+    "long_win_rate": 0.0,
+    "short_win_rate": 0.0,
+    "avg_hold_minutes": 0.0,
+    "confidence_accuracy": null,
+    "losing_streak_max": 0,
+    "high_vol_win_rate": null,
+    "low_vol_win_rate": null
+  },
+  "recommendations_th": "ไม่พบ OPENROUTER_API_KEY จึงไม่สามารถสร้างคำแนะนำจากโมเดลได้"
+}

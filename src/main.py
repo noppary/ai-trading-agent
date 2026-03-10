@@ -145,12 +145,19 @@ def main():
 
             # Reconcile active trades
             try:
+                # Fetch fresh state specifically for reconciliation
+                state_for_reconcile = await hyperliquid.get_user_state()
+                positions_for_reconcile = state_for_reconcile.get("assetPositions", [])
                 assets_with_positions = set()
-                for pos in state['positions']:
+                for pos_wrap in positions_for_reconcile:
                     try:
+                        # Accessing position details from the wrapped structure
+                        pos = pos_wrap["position"]
+                        # Check if there's an actual position size
                         if abs(float(pos.get('szi') or 0)) > 0:
                             assets_with_positions.add(pos.get('coin'))
-                    except Exception:
+                    except Exception as e:
+                        add_event(f"Error processing position for reconciliation: {e}")
                         continue
                 assets_with_orders = {o.get('coin') for o in (open_orders or []) if o.get('coin')}
                 for tr in active_trades[:]:

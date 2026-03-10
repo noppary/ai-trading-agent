@@ -1,5 +1,26 @@
 {
-  "updated_at": null,
+  "updated_at": "2026-03-10T03:08:57Z",
   "total_trades": 0,
-  "symbols": {}
+  "symbols": {
+    "BNB": {
+      "trade_count": 0,
+      "flag_exists": false,
+      "flag_created_this_run": false
+    },
+    "BTC": {
+      "trade_count": 0,
+      "flag_exists": false,
+      "flag_created_this_run": false
+    },
+    "ETH": {
+      "trade_count": 0,
+      "flag_exists": false,
+      "flag_created_this_run": false
+    },
+    "SOL": {
+      "trade_count": 0,
+      "flag_exists": false,
+      "flag_created_this_run": false
+    }
+  }
 }

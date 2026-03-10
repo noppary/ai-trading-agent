@@ -104,13 +104,18 @@ class TradingAgent:
         logging.info("Stage request → MiniMax Direct (%s)", model)
         self._log_request(model, payload)
 
-        # MiniMax V2 ChatCompletion payload mapping
-        # MiniMax uses 'model' and 'messages' same as OpenAI format in their V2 API
         resp = requests.post(self.minimax_url, headers=headers, json=payload, timeout=60)
-        if resp.status_code != 200:
-            logging.error("MiniMax %s error: %s - %s", model, resp.status_code, resp.text[:300])
         resp.raise_for_status()
-        return resp.json()
+        data = resp.json()
+
+        # MiniMax V2 API specific error handling (they return 200 even for logic errors)
+        base_resp = data.get("base_resp", {})
+        if base_resp.get("status_code", 0) != 0:
+            err_msg = base_resp.get("status_msg", "Unknown MiniMax error")
+            logging.error("MiniMax API error (%s): %s - %s", model, base_resp.get("status_code"), err_msg)
+            raise RuntimeError(f"MiniMax API error: {err_msg}")
+
+        return data
 
     def _post_stage3(self, payload: dict) -> dict:
         poster = self._get_poster(self.stage3_provider)
@@ -133,7 +138,7 @@ class TradingAgent:
     def _extract_content(self, resp_json: dict) -> str:
         try:
             return resp_json["choices"][0]["message"]["content"] or ""
-        except (KeyError, IndexError):
+        except (KeyError, IndexError, TypeError):
             return ""
 
     # ── Stage 1: Parse + Normalize (Qwen3-8B) ────────────────
@@ -163,7 +168,8 @@ class TradingAgent:
             "max_tokens": 4096,
         }
         try:
-            resp = self._post_openrouter(payload)
+            poster = self._get_poster(self.stage1_provider)
+            resp = poster(payload)
             content = self._extract_content(resp)
             # Validate it's parseable JSON
             json.loads(content)
@@ -217,7 +223,8 @@ class TradingAgent:
             "max_tokens": 4096,
         }
         try:
-            resp = self._post_openrouter(payload)
+            poster = self._get_poster(self.stage2_provider)
+            resp = poster(payload)
             content = self._extract_content(resp)
             json.loads(content)
             logging.info("Stage 2 (signals): %d chars", len(content))

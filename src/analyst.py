@@ -213,6 +213,10 @@ def analyze_symbol(history_path: Path, batch: str) -> tuple[Path, Path] | None:
         print(f"skipping non-array trade history: {history_path}")
         return None
 
+    if len(trades) == 0:
+        print(f"skipping {history_path.stem.upper()}: 0 trades — no LLM call needed")
+        return None
+
     symbol = history_path.stem.upper()
     metrics = compute_metrics(trades)
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Analyze trade history and generate per-symbol reports plus inbox markdown."""
+"""Analyze trade history, request Thai recommendations, and persist reports."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ import requests
 TRADE_HISTORY_DIR = Path("/root/ai-trading-agent/data/trade_history")
 REPORTS_DIR = Path("/root/ai-trading-agent/data/reports")
 INBOX_DIR = Path("/root/.openclaw/workspace/inbox")
+
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL = "anthropic/claude-haiku-4-5"
 
@@ -25,195 +26,240 @@ def _to_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
-def _parse_iso(ts: str | None) -> datetime | None:
-    if not ts:
+def _parse_iso(timestamp: str | None) -> datetime | None:
+    if not timestamp:
         return None
     try:
-        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        return datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
     except ValueError:
         return None
 
 
-def _pct(values: list[bool]) -> float:
-    if not values:
+def _pct(flags: list[bool]) -> float:
+    if not flags:
         return 0.0
-    return sum(1 for v in values if v) / len(values) * 100.0
+    return (sum(1 for flag in flags if flag) / len(flags)) * 100.0
+
+
+def _infer_volatility_bucket(raw_value: Any) -> str | None:
+    value = str(raw_value or "").strip().lower()
+    if not value:
+        return None
+    if "high" in value or value in {"volatile", "hv"}:
+        return "high"
+    if "low" in value or value in {"calm", "lv"}:
+        return "low"
+    return None
 
 
 def compute_metrics(trades: list[dict[str, Any]]) -> dict[str, Any]:
+    defaults = {
+        "trade_count": len(trades),
+        "win_rate": 0.0,
+        "avg_pnl_usd": 0.0,
+        "avg_pnl_pct": 0.0,
+        "total_pnl_usd": 0.0,
+        "best_trade": None,
+        "worst_trade": None,
+        "long_win_rate": 0.0,
+        "short_win_rate": 0.0,
+        "avg_hold_minutes": 0.0,
+        "confidence_accuracy": None,
+        "losing_streak_max": 0,
+        "high_vol_win_rate": None,
+        "low_vol_win_rate": None,
+    }
     if not trades:
-        return {
-            "trade_count": 0,
-            "win_rate": 0.0,
-            "avg_pnl_usd": 0.0,
-            "avg_pnl_pct": 0.0,
-            "total_pnl_usd": 0.0,
-            "best_trade": None,
-            "worst_trade": None,
-            "long_win_rate": 0.0,
-            "short_win_rate": 0.0,
-            "avg_hold_minutes": 0.0,
-            "confidence_accuracy": None,
-            "losing_streak_max": 0,
-            "high_vol_win_rate": None,
-            "low_vol_win_rate": None,
-        }
+        return defaults
 
-    pnls = [_to_float(t.get("pnl")) for t in trades]
-    pnl_pcts = [_to_float(t.get("pnl_pct")) for t in trades]
-    holds = [_to_float(t.get("hold_duration_minutes")) for t in trades]
-    wins = [p > 0 for p in pnls]
-    sides = [str(t.get("side", "")).lower() for t in trades]
-    market = [str(t.get("market_condition", "")).lower() for t in trades]
+    pnls = [_to_float(trade.get("pnl")) for trade in trades]
+    pnl_pcts = [_to_float(trade.get("pnl_pct")) for trade in trades]
+    hold_minutes = [_to_float(trade.get("hold_duration_minutes")) for trade in trades]
+    sides = [str(trade.get("side") or "").lower() for trade in trades]
 
-    best_idx = max(range(len(trades)), key=lambda i: pnls[i])
-    worst_idx = min(range(len(trades)), key=lambda i: pnls[i])
+    wins = [pnl > 0 for pnl in pnls]
+    best_index = max(range(len(trades)), key=lambda idx: pnls[idx])
+    worst_index = min(range(len(trades)), key=lambda idx: pnls[idx])
 
-    long_flags = [i for i, s in enumerate(sides) if s == "long"]
-    short_flags = [i for i, s in enumerate(sides) if s == "short"]
+    long_indexes = [idx for idx, side in enumerate(sides) if side == "long"]
+    short_indexes = [idx for idx, side in enumerate(sides) if side == "short"]
 
-    long_win_rate = _pct([pnls[i] > 0 for i in long_flags]) if long_flags else 0.0
-    short_win_rate = _pct([pnls[i] > 0 for i in short_flags]) if short_flags else 0.0
-
-    confidence_correct: list[bool] = []
-    for i, t in enumerate(trades):
-        conf = t.get("signal_confidence")
-        if conf is None:
+    confidence_scored: list[bool] = []
+    for idx, trade in enumerate(trades):
+        confidence = trade.get("signal_confidence")
+        if confidence in (None, ""):
             continue
-        c = _to_float(conf, default=-1)
-        if c < 0:
+        confidence_value = _to_float(confidence, default=-1.0)
+        if confidence_value < 0:
             continue
-        threshold = 50.0 if c > 1.0 else 0.5
-        confidence_correct.append((c >= threshold and pnls[i] > 0) or (c < threshold and pnls[i] <= 0))
-    confidence_accuracy = _pct(confidence_correct) if confidence_correct else None
+        threshold = 50.0 if confidence_value > 1.0 else 0.5
+        confidence_scored.append(
+            (confidence_value >= threshold and pnls[idx] > 0)
+            or (confidence_value < threshold and pnls[idx] <= 0)
+        )
 
-    max_streak = 0
-    cur_streak = 0
-    for p in pnls:
-        if p < 0:
-            cur_streak += 1
-            max_streak = max(max_streak, cur_streak)
+    losing_streak = 0
+    losing_streak_max = 0
+    for pnl in pnls:
+        if pnl < 0:
+            losing_streak += 1
+            losing_streak_max = max(losing_streak_max, losing_streak)
         else:
-            cur_streak = 0
+            losing_streak = 0
 
-    high_vol_idx = [i for i, m in enumerate(market) if "high" in m]
-    low_vol_idx = [i for i, m in enumerate(market) if "low" in m]
-    high_vol_win_rate = _pct([pnls[i] > 0 for i in high_vol_idx]) if high_vol_idx else None
-    low_vol_win_rate = _pct([pnls[i] > 0 for i in low_vol_idx]) if low_vol_idx else None
+    high_vol_indexes: list[int] = []
+    low_vol_indexes: list[int] = []
+    for idx, trade in enumerate(trades):
+        bucket = _infer_volatility_bucket(trade.get("market_condition"))
+        if bucket == "high":
+            high_vol_indexes.append(idx)
+        elif bucket == "low":
+            low_vol_indexes.append(idx)
 
     return {
-        "trade_count": len(trades),
+        **defaults,
         "win_rate": round(_pct(wins), 4),
         "avg_pnl_usd": round(sum(pnls) / len(pnls), 8),
         "avg_pnl_pct": round(sum(pnl_pcts) / len(pnl_pcts), 8),
         "total_pnl_usd": round(sum(pnls), 8),
-        "best_trade": trades[best_idx],
-        "worst_trade": trades[worst_idx],
-        "long_win_rate": round(long_win_rate, 4),
-        "short_win_rate": round(short_win_rate, 4),
-        "avg_hold_minutes": round(sum(holds) / len(holds), 4),
-        "confidence_accuracy": None if confidence_accuracy is None else round(confidence_accuracy, 4),
-        "losing_streak_max": max_streak,
-        "high_vol_win_rate": None if high_vol_win_rate is None else round(high_vol_win_rate, 4),
-        "low_vol_win_rate": None if low_vol_win_rate is None else round(low_vol_win_rate, 4),
+        "best_trade": trades[best_index],
+        "worst_trade": trades[worst_index],
+        "long_win_rate": round(_pct([pnls[idx] > 0 for idx in long_indexes]), 4) if long_indexes else 0.0,
+        "short_win_rate": round(_pct([pnls[idx] > 0 for idx in short_indexes]), 4) if short_indexes else 0.0,
+        "avg_hold_minutes": round(sum(hold_minutes) / len(hold_minutes), 4),
+        "confidence_accuracy": round(_pct(confidence_scored), 4) if confidence_scored else None,
+        "losing_streak_max": losing_streak_max,
+        "high_vol_win_rate": round(_pct([pnls[idx] > 0 for idx in high_vol_indexes]), 4) if high_vol_indexes else None,
+        "low_vol_win_rate": round(_pct([pnls[idx] > 0 for idx in low_vol_indexes]), 4) if low_vol_indexes else None,
     }
 
 
 def get_thai_recommendations(symbol: str, metrics: dict[str, Any]) -> str:
-    key = os.getenv("OPENROUTER_API_KEY")
-    if not key:
-        return "ไม่พบ OPENROUTER_API_KEY จึงไม่สามารถสร้างคำแนะนำด้วย AI ได้"
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        return "ไม่พบ OPENROUTER_API_KEY จึงไม่สามารถสร้างคำแนะนำจากโมเดลได้"
 
     prompt = (
-        "คุณเป็นผู้ช่วยวิเคราะห์กลยุทธ์เทรดคริปโต ให้คำแนะนำเป็นภาษาไทยแบบ actionable และสั้นกระชับ "
-        "จากข้อมูลสถิติต่อไปนี้ โดยเน้นการลด drawdown และเพิ่มคุณภาพสัญญาณ\n\n"
+        "วิเคราะห์ผลเทรดและเสนอคำแนะนำเป็นภาษาไทยแบบ actionable สำหรับผู้พัฒนาระบบเทรดอัตโนมัติ "
+        "ให้เน้นการลดการขาดทุนต่อเนื่อง ปรับคุณภาพสัญญาณ และระบุสิ่งที่ควรทดลองต่อไป\n\n"
         f"สัญลักษณ์: {symbol}\n"
-        f"metrics: {json.dumps(metrics, ensure_ascii=False)}\n\n"
-        "ตอบกลับเป็นหัวข้อย่อยภาษาไทย 5-8 ข้อ"
+        f"สถิติ: {json.dumps(metrics, ensure_ascii=False)}\n\n"
+        "ตอบเป็นหัวข้อย่อย 5-8 ข้อ ภาษาไทยเท่านั้น"
     )
 
-    payload = {
-        "model": OPENROUTER_MODEL,
-        "messages": [
-            {"role": "system", "content": "คุณเป็นนักวิเคราะห์การเทรดมืออาชีพ ตอบภาษาไทยเท่านั้น"},
-            {"role": "user", "content": prompt},
-        ],
-        "temperature": 0.3,
-    }
-    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    response = requests.post(
+        OPENROUTER_URL,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": OPENROUTER_MODEL,
+            "messages": [
+                {"role": "system", "content": "คุณเป็นนักวิเคราะห์ performance การเทรด ตอบภาษาไทยเท่านั้น"},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.3,
+        },
+        timeout=60,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    choices = payload.get("choices") or []
+    if not choices:
+        raise ValueError("OpenRouter returned no choices")
+    content = str(choices[0].get("message", {}).get("content", "")).strip()
+    if not content:
+        raise ValueError("OpenRouter returned empty content")
+    return content
+
+
+def _markdown_for_report(symbol: str, batch: str, report: dict[str, Any]) -> str:
+    metrics = report["metrics"]
+    return "\n".join(
+        [
+            f"# Analysis {symbol} {batch}",
+            "",
+            "## Summary",
+            f"- Generated at: {report['generated_at']}",
+            f"- Trade count: {metrics['trade_count']}",
+            f"- Win rate: {metrics['win_rate']}",
+            f"- Avg PnL USD: {metrics['avg_pnl_usd']}",
+            f"- Avg PnL %: {metrics['avg_pnl_pct']}",
+            f"- Total PnL USD: {metrics['total_pnl_usd']}",
+            f"- Long win rate: {metrics['long_win_rate']}",
+            f"- Short win rate: {metrics['short_win_rate']}",
+            f"- Avg hold minutes: {metrics['avg_hold_minutes']}",
+            f"- Confidence accuracy: {metrics['confidence_accuracy']}",
+            f"- Max losing streak: {metrics['losing_streak_max']}",
+            f"- High vol win rate: {metrics['high_vol_win_rate']}",
+            f"- Low vol win rate: {metrics['low_vol_win_rate']}",
+            "",
+            "## Recommendations",
+            report["recommendations_th"],
+            "",
+        ]
+    )
+
+
+def analyze_symbol(history_path: Path, batch: str) -> tuple[Path, Path] | None:
+    try:
+        trades = json.loads(history_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        print(f"skipping invalid trade history: {history_path}")
+        return None
+
+    if not isinstance(trades, list):
+        print(f"skipping non-array trade history: {history_path}")
+        return None
+
+    symbol = history_path.stem.upper()
+    metrics = compute_metrics(trades)
+
+    latest_close = max(
+        (_parse_iso(str(trade.get("close_time"))) for trade in trades if trade.get("close_time")),
+        default=None,
+    )
+    generated_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
     try:
-        resp = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=60)
-        resp.raise_for_status()
-        data = resp.json()
-        choices = data.get("choices", [])
-        if not choices:
-            return "ไม่สามารถดึงคำแนะนำจาก OpenRouter ได้ (choices ว่าง)"
-        return str(choices[0].get("message", {}).get("content", "")).strip() or "ได้รับผลลัพธ์ว่างจากโมเดล"
+        recommendations_th = get_thai_recommendations(symbol, metrics)
     except Exception as exc:  # noqa: BLE001
-        return f"เกิดข้อผิดพลาดระหว่างเรียก OpenRouter: {exc}"
+        recommendations_th = f"ไม่สามารถสร้างคำแนะนำจาก OpenRouter ได้: {exc}"
 
+    report = {
+        "symbol": symbol,
+        "batch": batch,
+        "generated_at": generated_at,
+        "latest_close_time": latest_close.isoformat().replace("+00:00", "Z") if latest_close else None,
+        "metrics": metrics,
+        "recommendations_th": recommendations_th,
+    }
 
-def write_inbox_markdown(symbol: str, batch: str, metrics: dict[str, Any], recommendations_th: str) -> Path:
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     INBOX_DIR.mkdir(parents=True, exist_ok=True)
-    md_path = INBOX_DIR / f"analysis_{symbol}_{batch}.md"
-    lines = [
-        f"# Analysis: {symbol} ({batch})",
-        "",
-        "## Metrics",
-        f"- trade_count: {metrics.get('trade_count')}",
-        f"- win_rate: {metrics.get('win_rate')}",
-        f"- avg_pnl_usd: {metrics.get('avg_pnl_usd')}",
-        f"- avg_pnl_pct: {metrics.get('avg_pnl_pct')}",
-        f"- total_pnl_usd: {metrics.get('total_pnl_usd')}",
-        f"- long_win_rate: {metrics.get('long_win_rate')}",
-        f"- short_win_rate: {metrics.get('short_win_rate')}",
-        f"- avg_hold_minutes: {metrics.get('avg_hold_minutes')}",
-        f"- confidence_accuracy: {metrics.get('confidence_accuracy')}",
-        f"- losing_streak_max: {metrics.get('losing_streak_max')}",
-        f"- high_vol_win_rate: {metrics.get('high_vol_win_rate')}",
-        f"- low_vol_win_rate: {metrics.get('low_vol_win_rate')}",
-        "",
-        "## Thai Recommendations",
-        recommendations_th,
-        "",
-    ]
-    md_path.write_text("\n".join(lines), encoding="utf-8")
-    return md_path
+
+    report_path = REPORTS_DIR / f"analysis_{symbol}_{batch}.json"
+    report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    inbox_path = INBOX_DIR / f"analysis_{symbol}_{batch}.md"
+    inbox_path.write_text(_markdown_for_report(symbol, batch, report), encoding="utf-8")
+    return report_path, inbox_path
 
 
 def main() -> None:
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     TRADE_HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    INBOX_DIR.mkdir(parents=True, exist_ok=True)
 
     batch = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-    files = sorted([p for p in TRADE_HISTORY_DIR.glob("*.json") if p.is_file()])
-
-    for path in files:
-        symbol = path.stem.upper()
-        try:
-            trades = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            print(f"Skipping invalid JSON: {path}")
+    trade_files = sorted(path for path in TRADE_HISTORY_DIR.glob("*.json") if path.is_file())
+    for trade_file in trade_files:
+        outputs = analyze_symbol(trade_file, batch)
+        if outputs is None:
             continue
-        if not isinstance(trades, list):
-            print(f"Skipping non-array trade file: {path}")
-            continue
-
-        metrics = compute_metrics(trades)
-        recommendations_th = get_thai_recommendations(symbol, metrics)
-
-        report = {
-            "symbol": symbol,
-            "batch": batch,
-            "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-            "metrics": metrics,
-            "recommendations_th": recommendations_th,
-        }
-        report_path = REPORTS_DIR / f"analysis_{symbol}_{batch}.json"
-        report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
-        inbox_path = write_inbox_markdown(symbol, batch, metrics, recommendations_th)
-        print(f"Saved {report_path} and {inbox_path}")
+        report_path, inbox_path = outputs
+        print(f"saved {report_path} and {inbox_path}")
 
 
 if __name__ == "__main__":

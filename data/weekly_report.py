@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a weekly markdown summary from trade history files."""
+"""Generate a weekly markdown summary across all symbols."""
 
 from __future__ import annotations
 
@@ -19,11 +19,11 @@ def _to_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
-def _parse_iso(ts: str | None) -> datetime | None:
-    if not ts:
+def _parse_iso(timestamp: str | None) -> datetime | None:
+    if not timestamp:
         return None
     try:
-        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        return datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
     except ValueError:
         return None
 
@@ -31,8 +31,7 @@ def _parse_iso(ts: str | None) -> datetime | None:
 def _win_rate(trades: list[dict[str, Any]]) -> float:
     if not trades:
         return 0.0
-    wins = sum(1 for t in trades if _to_float(t.get("pnl")) > 0)
-    return (wins / len(trades)) * 100.0
+    return (sum(1 for trade in trades if _to_float(trade.get("pnl")) > 0) / len(trades)) * 100.0
 
 
 def generate_weekly_report() -> Path:
@@ -41,65 +40,62 @@ def generate_weekly_report() -> Path:
 
     now = datetime.now(UTC)
     cutoff = now - timedelta(days=7)
+    grouped: dict[str, list[dict[str, Any]]] = {}
 
-    weekly_by_symbol: dict[str, list[dict[str, Any]]] = {}
-    for file in sorted(TRADE_HISTORY_DIR.glob("*.json")):
-        symbol = file.stem.upper()
+    for history_path in sorted(TRADE_HISTORY_DIR.glob("*.json")):
         try:
-            trades = json.loads(file.read_text(encoding="utf-8"))
+            trades = json.loads(history_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             continue
         if not isinstance(trades, list):
             continue
 
-        filtered: list[dict[str, Any]] = []
-        for t in trades:
-            close_ts = _parse_iso(str(t.get("close_time", "")))
-            if close_ts and close_ts >= cutoff:
-                filtered.append(t)
-        if filtered:
-            weekly_by_symbol[symbol] = filtered
+        weekly_trades = []
+        for trade in trades:
+            closed_at = _parse_iso(str(trade.get("close_time") or ""))
+            if closed_at and closed_at >= cutoff:
+                weekly_trades.append(trade)
+        if weekly_trades:
+            grouped[history_path.stem.upper()] = weekly_trades
 
-    all_weekly_trades = [t for trades in weekly_by_symbol.values() for t in trades]
-    total_pnl = sum(_to_float(t.get("pnl")) for t in all_weekly_trades)
-    overall_win_rate = _win_rate(all_weekly_trades)
+    all_trades = [trade for trades in grouped.values() for trade in trades]
+    total_pnl = sum(_to_float(trade.get("pnl")) for trade in all_trades)
 
     lines = [
-        f"# Weekly Trade Summary ({now.strftime('%Y-%m-%d')})",
+        f"# Weekly Trade Summary {now.strftime('%Y-%m-%d')}",
         "",
-        f"- Window: last 7 days (from {cutoff.strftime('%Y-%m-%d %H:%M UTC')})",
-        f"- Total trades: {len(all_weekly_trades)}",
+        f"- Window start (UTC): {cutoff.strftime('%Y-%m-%d %H:%M:%S')}",
+        f"- Window end (UTC): {now.strftime('%Y-%m-%d %H:%M:%S')}",
+        f"- Symbols with trades: {len(grouped)}",
+        f"- Total completed trades: {len(all_trades)}",
         f"- Total PnL (USD): {total_pnl:.8f}",
-        f"- Overall win rate: {overall_win_rate:.2f}%",
+        f"- Overall win rate: {_win_rate(all_trades):.2f}%",
         "",
-        "## Per Symbol",
-        "| Symbol | Trades | Win Rate | Total PnL (USD) | Avg PnL (USD) |",
-        "|---|---:|---:|---:|---:|",
+        "## By Symbol",
+        "| Symbol | Trades | Win Rate | Total PnL USD | Avg PnL USD | Avg Hold Minutes |",
+        "|---|---:|---:|---:|---:|---:|",
     ]
 
-    for symbol, trades in sorted(weekly_by_symbol.items()):
-        pnl_sum = sum(_to_float(t.get("pnl")) for t in trades)
-        avg_pnl = pnl_sum / len(trades) if trades else 0.0
-        lines.append(f"| {symbol} | {len(trades)} | {_win_rate(trades):.2f}% | {pnl_sum:.8f} | {avg_pnl:.8f} |")
+    if not grouped:
+        lines.append("| (none) | 0 | 0.00% | 0.00000000 | 0.00000000 | 0.00 |")
+    else:
+        for symbol, trades in sorted(grouped.items()):
+            total_symbol_pnl = sum(_to_float(trade.get("pnl")) for trade in trades)
+            avg_symbol_pnl = total_symbol_pnl / len(trades)
+            avg_hold = sum(_to_float(trade.get("hold_duration_minutes")) for trade in trades) / len(trades)
+            lines.append(
+                f"| {symbol} | {len(trades)} | {_win_rate(trades):.2f}% | "
+                f"{total_symbol_pnl:.8f} | {avg_symbol_pnl:.8f} | {avg_hold:.2f} |"
+            )
 
-    if not weekly_by_symbol:
-        lines.append("| (none) | 0 | 0.00% | 0.00000000 | 0.00000000 |")
-
-    lines += [
-        "",
-        "## Notes",
-        "- Source: `data/trade_history/*.json`",
-        "- This report includes only trades whose `close_time` falls in the last 7 days.",
-    ]
-
-    path = REPORTS_DIR / f"weekly_{now.strftime('%Y%m%d')}.md"
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return path
+    report_path = REPORTS_DIR / f"weekly_{now.strftime('%Y%m%d')}.md"
+    report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return report_path
 
 
 def main() -> None:
-    out = generate_weekly_report()
-    print(f"Saved weekly report: {out}")
+    report_path = generate_weekly_report()
+    print(f"saved weekly report {report_path}")
 
 
 if __name__ == "__main__":

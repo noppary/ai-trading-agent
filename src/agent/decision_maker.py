@@ -31,13 +31,30 @@ class TradingAgent:
         self.together_key = CONFIG.get("together_api_key")
         self.together_url = f"{CONFIG['together_base_url']}/chat/completions"
 
-        # Models
+        # MiniMax (Direct)
+        self.minimax_key = CONFIG.get("minimax_api_key")
+        self.minimax_url = CONFIG.get("minimax_base_url")
+
+        # Models & Providers
         self.stage1_model = CONFIG["stage1_model"]
+        self.stage1_provider = CONFIG.get("stage1_provider", "openrouter")
         self.stage2_model = CONFIG["stage2_model"]
+        self.stage2_provider = CONFIG.get("stage2_provider", "openrouter")
         self.stage3_model = CONFIG["stage3_model"]
         self.stage3_provider = CONFIG.get("stage3_provider", "together")
 
     # ── HTTP helpers ──────────────────────────────────────────
+
+    def _get_poster(self, provider: str):
+        """Return the appropriate posting method for the given provider."""
+        provider = provider.lower()
+        if provider == "openrouter":
+            return self._post_openrouter
+        if provider == "together":
+            return self._post_together
+        if provider == "minimax":
+            return self._post_minimax
+        raise ValueError(f"Unsupported provider: {provider}")
 
     def _post_openrouter(self, payload: dict) -> dict:
         headers = {
@@ -61,7 +78,7 @@ class TradingAgent:
 
     def _post_together(self, payload: dict) -> dict:
         if not self.together_key:
-            raise RuntimeError("TOGETHER_API_KEY not set — required for Stage 3")
+            raise RuntimeError("TOGETHER_API_KEY not set — required for Together provider")
         headers = {
             "Authorization": f"Bearer {self.together_key}",
             "Content-Type": "application/json",
@@ -76,10 +93,29 @@ class TradingAgent:
         resp.raise_for_status()
         return resp.json()
 
+    def _post_minimax(self, payload: dict) -> dict:
+        if not self.minimax_key:
+            raise RuntimeError("MINIMAX_API_KEY not set — required for MiniMax provider")
+        headers = {
+            "Authorization": f"Bearer {self.minimax_key}",
+            "Content-Type": "application/json",
+        }
+        model = payload.get("model", "?")
+        logging.info("Stage request → MiniMax Direct (%s)", model)
+        self._log_request(model, payload)
+
+        # MiniMax V2 ChatCompletion payload mapping
+        # MiniMax uses 'model' and 'messages' same as OpenAI format in their V2 API
+        resp = requests.post(self.minimax_url, headers=headers, json=payload, timeout=60)
+        if resp.status_code != 200:
+            logging.error("MiniMax %s error: %s - %s", model, resp.status_code, resp.text[:300])
+        resp.raise_for_status()
+        return resp.json()
+
     def _post_stage3(self, payload: dict) -> dict:
-        fn = self._post_together if self.stage3_provider == "together" else self._post_openrouter
+        poster = self._get_poster(self.stage3_provider)
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(fn, payload)
+            future = executor.submit(poster, payload)
             try:
                 return future.result(timeout=_STAGE3_TIMEOUT)
             except concurrent.futures.TimeoutError:

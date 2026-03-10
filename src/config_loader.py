@@ -85,11 +85,16 @@ CONFIG = {
     # Together AI (Stage 3 — trade decisions)
     "together_api_key": _get_env("TOGETHER_API_KEY"),
     "together_base_url": _get_env("TOGETHER_BASE_URL", "https://api.together.xyz/v1"),
+    # MiniMax API (Direct)
+    "minimax_api_key": _get_env("MINIMAX_API_KEY"),
+    "minimax_base_url": _get_env("MINIMAX_BASE_URL", "https://api.minimax.io/v1/text/chatcompletion_v2"),
     # Multi-model pipeline
     "stage1_model": _get_env("STAGE1_MODEL", "qwen/qwen3-8b"),            # Parse + normalize ($0.05/M)
+    "stage1_provider": _get_env("STAGE1_PROVIDER", "openrouter"),
     "stage2_model": _get_env("STAGE2_MODEL", "qwen/qwen3-32b"),           # Signals + risk ($0.12/M)
+    "stage2_provider": _get_env("STAGE2_PROVIDER", "openrouter"),
     "stage3_model": _get_env("STAGE3_MODEL", "moonshotai/kimi-k2.5"),     # Trade decisions (Together AI)
-    "stage3_provider": _get_env("STAGE3_PROVIDER", "together"),            # "together" or "openrouter"
+    "stage3_provider": _get_env("STAGE3_PROVIDER", "together"),            # "together" or "openrouter" or "minimax"
     # Legacy single-model (fallback)
     "llm_model": _get_env("LLM_MODEL", "x-ai/grok-4"),
     # Reasoning tokens

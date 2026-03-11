@@ -248,8 +248,8 @@ class TradingAgent:
                             "asset": {"type": "string"},
                             "action": {"type": "string", "enum": ["buy", "sell", "hold"]},
                             "allocation_usd": {"type": "number"},
-                            "tp_price": {"type": ["number", "null"]},
-                            "sl_price": {"type": ["number", "null"]},
+                            "tp_price": {"type": "number"},
+                            "sl_price": {"type": "number"},
                             "exit_plan": {"type": "string"},
                             "rationale": {"type": "string"},
                         },
@@ -316,9 +316,9 @@ class TradingAgent:
                     return parsed
 
                 logging.warning("Stage 3: unexpected format, retrying")
-            except requests.HTTPError as e:
-                if attempt == 0 and e.response.status_code in (400, 422):
-                    logging.warning("Stage 3: response_format rejected, retrying without")
+            except (requests.HTTPError, RuntimeError) as e:
+                if attempt == 0:
+                    logging.warning("Stage 3: response_format rejected (%s), retrying without", e)
                     continue
                 raise
             except TimeoutError as e:

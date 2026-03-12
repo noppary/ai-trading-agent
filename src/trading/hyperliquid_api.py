@@ -152,32 +152,25 @@ class HyperliquidAPI:
                 return round(amount, decimals)
         return round(amount, 8)
 
+    async def _enforce_leverage(self, asset, requested_leverage=None):
+        """Set leverage on the exchange, capped to MAX_LEVERAGE config."""
+        max_lev = CONFIG.get("max_leverage", 5)
+        target = min(requested_leverage or max_lev, max_lev)
+        try:
+            await self._retry(lambda: self.exchange.update_leverage(target, asset, is_cross=True))
+        except Exception as e:
+            logging.warning("Failed to set leverage %dx for %s: %s", target, asset, e)
+
     async def place_buy_order(self, asset, amount, slippage=0.01):
-        """Submit a market buy order with exchange-side rounding and retry logic.
-
-        Args:
-            asset: Market symbol to open.
-            amount: Contract size to open before rounding.
-            slippage: Maximum acceptable slippage expressed as a decimal.
-
-        Returns:
-            Raw SDK response from :meth:`Exchange.market_open`.
-        """
+        """Submit a market buy order with exchange-side rounding and retry logic."""
         amount = self.round_size(asset, amount)
+        await self._enforce_leverage(asset)
         return await self._retry(lambda: self.exchange.market_open(asset, True, amount, None, slippage))
 
     async def place_sell_order(self, asset, amount, slippage=0.01):
-        """Submit a market sell order with exchange-side rounding and retry logic.
-
-        Args:
-            asset: Market symbol to open.
-            amount: Contract size to open before rounding.
-            slippage: Maximum acceptable slippage expressed as a decimal.
-
-        Returns:
-            Raw SDK response from :meth:`Exchange.market_open`.
-        """
+        """Submit a market sell order with exchange-side rounding and retry logic."""
         amount = self.round_size(asset, amount)
+        await self._enforce_leverage(asset)
         return await self._retry(lambda: self.exchange.market_open(asset, False, amount, None, slippage))
 
     async def place_take_profit(self, asset, is_buy, amount, tp_price):
@@ -239,6 +232,39 @@ class HyperliquidAPI:
         except (RuntimeError, ValueError, KeyError, ConnectionError) as e:
             logging.error("Cancel all orders error for %s: %s", asset, e)
             return {"status": "error", "message": str(e)}
+
+    async def close_all_positions(self):
+        """Close all open positions via market orders and cancel all open orders."""
+        results = []
+        try:
+            state = await self._retry(lambda: self.info.user_state(self.wallet.address))
+            positions = state.get("assetPositions", [])
+            for pos_wrap in positions:
+                pos = pos_wrap["position"]
+                size = float(pos.get("szi", 0) or 0)
+                coin = pos.get("coin")
+                if abs(size) > 0 and coin:
+                    try:
+                        amount = self.round_size(coin, abs(size))
+                        is_buy = size < 0  # Buy to close short, sell to close long
+                        await self._retry(lambda c=coin, b=is_buy, a=amount: self.exchange.market_open(c, b, a, None, 0.02))
+                        results.append({"coin": coin, "closed_size": size, "status": "ok"})
+                    except Exception as e:
+                        results.append({"coin": coin, "closed_size": size, "status": "error", "error": str(e)})
+            # Cancel all remaining orders
+            open_orders = await self._retry(lambda: self.info.frontend_open_orders(self.wallet.address))
+            for order in open_orders:
+                coin = order.get("coin")
+                oid = order.get("oid")
+                if coin and oid:
+                    try:
+                        await self.cancel_order(coin, oid)
+                    except Exception:
+                        pass
+        except Exception as e:
+            logging.error("close_all_positions error: %s", e)
+            results.append({"status": "error", "error": str(e)})
+        return results
 
     async def get_open_orders(self):
         """Fetch and normalize open orders associated with the wallet.

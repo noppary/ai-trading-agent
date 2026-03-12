@@ -76,6 +76,11 @@ def main():
     recent_events = deque(maxlen=200)
     diary_path = "diary.jsonl"
     initial_account_value = None
+    peak_account_value = None
+    daily_start_value = None
+    daily_start_date = None
+    consecutive_failures = 0
+    trading_halted = False
     # Perp mid-price history sampled each loop (authoritative, avoids spot/perp basis mismatch)
     price_history = {}
 
@@ -85,9 +90,21 @@ def main():
         """Log an informational event and push it into the recent events deque."""
         logging.info(msg)
 
+    def send_telegram_alert(message: str):
+        """Send an alert via the openclaw agent CLI (non-blocking, best-effort)."""
+        import subprocess
+        try:
+            subprocess.Popen(
+                ["openclaw", "agent", "--to", "kevin", "--message", message, "--deliver"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        except Exception as e:
+            logging.error("Telegram alert failed: %s", e)
+
     async def run_loop():
         """Main trading loop that gathers data, calls the agent, and executes trades."""
-        nonlocal invocation_count, initial_account_value
+        nonlocal invocation_count, initial_account_value, peak_account_value
+        nonlocal daily_start_value, daily_start_date, consecutive_failures, trading_halted
         while True:
             invocation_count += 1
             minutes_since_start = (datetime.now(timezone.utc) - start_time).total_seconds() / 60
@@ -101,6 +118,41 @@ def main():
             if initial_account_value is None:
                 initial_account_value = account_value
             total_return_pct = ((account_value - initial_account_value) / initial_account_value * 100.0) if initial_account_value else 0.0
+
+            # ── Circuit breaker checks ──
+            if peak_account_value is None or account_value > peak_account_value:
+                peak_account_value = account_value
+
+            today = datetime.now(timezone.utc).date()
+            if daily_start_date != today:
+                daily_start_date = today
+                daily_start_value = account_value
+
+            drawdown_pct = (peak_account_value - account_value) / peak_account_value * 100 if peak_account_value else 0
+            daily_loss = (daily_start_value - account_value) if daily_start_value else 0
+
+            if drawdown_pct > CONFIG.get("max_drawdown_pct", 15):
+                trading_halted = True
+                add_event(f"CIRCUIT BREAKER: drawdown {drawdown_pct:.1f}% exceeds limit")
+            if daily_loss > CONFIG.get("daily_loss_limit_usd", 50):
+                trading_halted = True
+                add_event(f"CIRCUIT BREAKER: daily loss ${daily_loss:.2f} exceeds limit")
+
+            if trading_halted:
+                add_event(f"CIRCUIT BREAKER ACTIVE: halting trading (drawdown={drawdown_pct:.1f}%, daily_loss=${daily_loss:.2f})")
+                try:
+                    await hyperliquid.close_all_positions()
+                except Exception as e:
+                    add_event(f"Failed to close positions during circuit break: {e}")
+                send_telegram_alert(
+                    f"🚨 CIRCUIT BREAKER TRIGGERED\n"
+                    f"Drawdown: {drawdown_pct:.1f}%\n"
+                    f"Daily loss: ${daily_loss:.2f}\n"
+                    f"Account value: ${account_value:.2f}\n"
+                    f"All positions closed. Trading halted."
+                )
+                await asyncio.sleep(get_interval_seconds(args.interval))
+                continue
 
             positions = []
             for pos_wrap in state['positions']:
@@ -336,6 +388,21 @@ def main():
                 add_event(f"Traceback: {traceback.format_exc()}")
                 outputs = {}
 
+            # Track consecutive failures
+            if _is_failed_outputs(outputs):
+                consecutive_failures += 1
+                add_event(f"Pipeline failure #{consecutive_failures}")
+                if consecutive_failures >= CONFIG.get("consecutive_failure_limit", 10):
+                    trading_halted = True
+                    add_event(f"CIRCUIT BREAKER: {consecutive_failures} consecutive pipeline failures")
+                    send_telegram_alert(
+                        f"🚨 PIPELINE FAILURE HALT\n"
+                        f"{consecutive_failures} consecutive failures.\n"
+                        f"Trading halted. Check OpenRouter/model status."
+                    )
+                    await asyncio.sleep(get_interval_seconds(args.interval))
+                    continue
+
             # Retry once on failure/parse error with a stricter instruction prefix
             if _is_failed_outputs(outputs):
                 add_event("Retrying LLM once due to invalid/parse-error output")
@@ -354,6 +421,10 @@ def main():
                     add_event(f"Retry agent error: {e}")
                     add_event(f"Retry traceback: {traceback.format_exc()}")
                     outputs = {}
+
+            # Reset failure counter on successful pipeline run
+            if not _is_failed_outputs(outputs):
+                consecutive_failures = 0
 
             reasoning_text = outputs.get("reasoning", "") if isinstance(outputs, dict) else ""
             if reasoning_text:
@@ -377,6 +448,19 @@ def main():
                         if alloc_usd <= 0:
                             add_event(f"Holding {asset}: zero/negative allocation")
                             continue
+
+                        # ── Allocation caps ──
+                        max_per_asset = account_value * (CONFIG.get("max_position_pct", 25) / 100.0)
+                        current_exposure = sum(
+                            abs(float(p.get('szi', 0)) * float(p.get('entryPx', 0)))
+                            for p in state.get('positions', [])
+                        )
+                        max_remaining = account_value * (CONFIG.get("max_total_exposure_pct", 75) / 100.0) - current_exposure
+                        alloc_usd = min(alloc_usd, max_per_asset, max(0, max_remaining), state['balance'] * 0.9)
+                        if alloc_usd <= 0:
+                            add_event(f"Holding {asset}: allocation capped to zero")
+                            continue
+
                         amount = alloc_usd / current_price
 
                         order = await hyperliquid.place_buy_order(asset, amount) if is_buy else await hyperliquid.place_sell_order(asset, amount)
@@ -444,6 +528,12 @@ def main():
                                 "filled": filled
                             }
                             f.write(json.dumps(diary_entry) + "\n")
+                        send_telegram_alert(
+                            f"📊 {action.upper()} {asset}\n"
+                            f"Amount: {amount:.4f} (~${alloc_usd:.0f})\n"
+                            f"Price: ${current_price:.2f}\n"
+                            f"TP: {output.get('tp_price')}, SL: {output.get('sl_price')}"
+                        )
                     else:
                         add_event(f"Hold {asset}: {output.get('rationale', '')}")
                         # Write hold to diary
@@ -486,10 +576,14 @@ def main():
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
+    ALLOWED_LOG_FILES = {"llm_requests.log", "prompts.log", "diary.jsonl"}
+
     async def handle_logs(request):
         """Stream log files with optional download or tailing behaviour."""
         try:
             path = request.query.get('path', 'llm_requests.log')
+            if path not in ALLOWED_LOG_FILES:
+                return web.json_response({"error": "forbidden"}, status=403)
             download = request.query.get('download')
             limit_param = request.query.get('limit')
             if not os.path.exists(path):
@@ -506,10 +600,23 @@ def main():
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
+    async def handle_emergency_close(request):
+        """Close all positions, cancel all orders, and halt trading."""
+        nonlocal trading_halted
+        trading_halted = True
+        try:
+            results = await hyperliquid.close_all_positions()
+            add_event("EMERGENCY CLOSE: all positions closed via API endpoint")
+            send_telegram_alert("🚨 EMERGENCY CLOSE triggered via API. All positions closed. Trading halted.")
+            return web.json_response({"status": "halted", "close_results": [str(r) for r in results]})
+        except Exception as e:
+            return web.json_response({"status": "error", "error": str(e)}, status=500)
+
     async def start_api(app):
         """Register HTTP endpoints for observing diary entries and logs."""
         app.router.add_get('/diary', handle_diary)
         app.router.add_get('/logs', handle_logs)
+        app.router.add_post('/emergency-close', handle_emergency_close)
 
     async def main_async():
         """Start the aiohttp server and kick off the trading loop."""

@@ -107,6 +107,13 @@ CONFIG = {
     "assets": _get_env("ASSETS"),  # e.g., "BTC ETH SOL" or "BTC,ETH,SOL"
     "interval": _get_env("INTERVAL"),  # e.g., "5m", "1h"
     # API server
-    "api_host": _get_env("API_HOST", "0.0.0.0"),
+    "api_host": _get_env("API_HOST", "127.0.0.1"),
     "api_port": _get_env("APP_PORT") or _get_env("API_PORT") or "3000",
+    # Circuit breaker / risk limits
+    "max_drawdown_pct": _get_int("MAX_DRAWDOWN_PCT", 15),
+    "daily_loss_limit_usd": _get_int("DAILY_LOSS_LIMIT_USD", 50),
+    "max_position_pct": _get_int("MAX_POSITION_PCT", 25),
+    "max_total_exposure_pct": _get_int("MAX_TOTAL_EXPOSURE_PCT", 75),
+    "max_leverage": _get_int("MAX_LEVERAGE", 5),
+    "consecutive_failure_limit": _get_int("CONSECUTIVE_FAILURE_LIMIT", 10),
 }

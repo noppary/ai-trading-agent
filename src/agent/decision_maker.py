@@ -254,10 +254,12 @@ class TradingAgent:
                             "rationale": {"type": "string"},
                         },
                         "required": ["asset", "action", "allocation_usd", "tp_price", "sl_price", "exit_plan", "rationale"],
+                        "additionalProperties": False,
                     },
                 }
             },
             "required": ["reasoning", "trade_decisions"],
+            "additionalProperties": False,
         }
 
         payload = {

@@ -108,6 +108,7 @@ CONFIG = {
     "interval": _get_env("INTERVAL"),  # e.g., "5m", "1h"
     # API server
     "api_host": _get_env("API_HOST", "127.0.0.1"),
+    "dry_run_mode": _get_bool("DRY_RUN_MODE", True),
     "api_port": _get_env("APP_PORT") or _get_env("API_PORT") or "3000",
     # Circuit breaker / risk limits
     "max_drawdown_pct": _get_int("MAX_DRAWDOWN_PCT", 15),

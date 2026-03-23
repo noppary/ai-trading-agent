@@ -462,6 +462,26 @@ def main():
 
                         amount = alloc_usd / current_price
 
+                        # ── DRY RUN MODE: Skip actual order placement ──
+                        if CONFIG.get("dry_run_mode", False):
+                            add_event(f"DRY RUN: Would {action.upper()} {asset} amount {amount:.4f} at ~{current_price}")
+                            add_event(f"DRY RUN: Would set TP={output.get("tp_price")} SL={output.get("sl_price")}")
+                            # Log to diary as DRY RUN
+                            with open(diary_path, "a") as f:
+                                diary_entry = {
+                                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                                    "asset": asset,
+                                    "action": f"dryrun_{action}",
+                                    "allocation_usd": alloc_usd,
+                                    "amount": amount,
+                                    "entry_price": current_price,
+                                    "tp_price": output.get("tp_price"),
+                                    "sl_price": output.get("sl_price"),
+                                    "dry_run": True
+                                }
+                                f.write(json.dumps(diary_entry) + "\n")
+                            continue
+
                         order = await hyperliquid.place_buy_order(asset, amount) if is_buy else await hyperliquid.place_sell_order(asset, amount)
                         # Confirm by checking recent fills for this asset shortly after placing
                         await asyncio.sleep(1)

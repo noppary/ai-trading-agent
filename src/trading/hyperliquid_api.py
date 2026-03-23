@@ -54,6 +54,8 @@ class HyperliquidAPI:
             self.wallet = Account.from_mnemonic(CONFIG["mnemonic"])
         else:
             raise ValueError("Either HYPERLIQUID_PRIVATE_KEY/LIGHTER_PRIVATE_KEY or MNEMONIC must be provided")
+        # Main wallet holds the funds; API wallet signs on its behalf
+        self.main_wallet = CONFIG.get("hyperliquid_main_wallet")
         # Choose base URL: allow override via env-config; fallback to network selection
         network = (CONFIG.get("hyperliquid_network") or "mainnet").lower()
         base_url = CONFIG.get("hyperliquid_base_url")
@@ -77,7 +79,80 @@ class HyperliquidAPI:
             if s["tokens"][0] < token_count and s["tokens"][1] < token_count
         ]
         self.info = Info(self.base_url, skip_ws=True, spot_meta=raw_spot_meta)
-        self.exchange = Exchange(self.wallet, self.base_url, spot_meta=raw_spot_meta)
+        exchange_kwargs = {"wallet": self.wallet, "base_url": self.base_url, "spot_meta": raw_spot_meta}
+        if self.main_wallet:
+            exchange_kwargs["account_address"] = self.main_wallet
+        self.exchange = Exchange(**exchange_kwargs)
+
+    async def validate_wallet(self):
+        """Check that the API wallet is recognized by Hyperliquid.
+
+        Returns True if the wallet can query state successfully.
+        Logs a clear error and returns False if the wallet is rejected.
+        """
+        try:
+            state = await self._retry(lambda: self.info.user_state(self._query_address))
+            margin = state.get("marginSummary", {})
+            acct_value = float(margin.get("accountValue", 0))
+            logging.info(
+                "Wallet validated: %s (account value: $%.2f)",
+                self._query_address, acct_value,
+            )
+            return True
+        except Exception as e:
+            logging.error(
+                "WALLET VALIDATION FAILED for %s: %s — "
+                "the API wallet may not be authorized on Hyperliquid. "
+                "Re-approve it in Settings at app.hyperliquid-testnet.xyz",
+                self._query_address, e,
+            )
+            return False
+
+    async def ensure_perp_funded(self, min_balance: float = 10.0):
+        """Verify the account has enough USDC to trade.
+
+        With unified accounts, spot USDC serves as perp collateral automatically.
+        This method checks both perp and spot balances and logs the available funds.
+        """
+        import requests as _requests
+
+        try:
+            state = await self._retry(lambda: self.info.user_state(self._query_address))
+            margin = state.get("marginSummary", {})
+            perp_balance = float(margin.get("accountValue", 0))
+
+            # Check spot balance (unified accounts use spot USDC as perp collateral)
+            resp = _requests.post(
+                self.base_url + "/info",
+                json={"type": "spotClearinghouseState", "user": self._query_address},
+                timeout=10,
+            )
+            spot_data = resp.json()
+            usdc_balance = 0.0
+            for bal in spot_data.get("balances", []):
+                if bal.get("coin", "").upper() in ("USDC", "USDT"):
+                    usdc_balance = float(bal.get("total", 0))
+                    break
+
+            total_available = perp_balance + usdc_balance
+            logging.info(
+                "Account funding: perp=$%.2f, spot=$%.2f, total=$%.2f",
+                perp_balance, usdc_balance, total_available,
+            )
+
+            if total_available < min_balance:
+                logging.warning(
+                    "Total available $%.2f < $%.2f minimum — trading may fail",
+                    total_available, min_balance,
+                )
+
+        except Exception as e:
+            logging.error("ensure_perp_funded check failed: %s", e)
+
+    @property
+    def _query_address(self) -> str:
+        """Return the address to use for balance/position/order queries."""
+        return self.main_wallet or self.wallet.address
 
     def _reset_clients(self):
         """Recreate SDK clients after connection failures while logging failures."""
@@ -222,7 +297,7 @@ class HyperliquidAPI:
     async def cancel_all_orders(self, asset):
         """Cancel every open order for ``asset`` owned by the configured wallet."""
         try:
-            open_orders = await self._retry(lambda: self.info.frontend_open_orders(self.wallet.address))
+            open_orders = await self._retry(lambda: self.info.frontend_open_orders(self._query_address))
             for order in open_orders:
                 if order.get("coin") == asset:
                     oid = order.get("oid")
@@ -237,7 +312,7 @@ class HyperliquidAPI:
         """Close all open positions via market orders and cancel all open orders."""
         results = []
         try:
-            state = await self._retry(lambda: self.info.user_state(self.wallet.address))
+            state = await self._retry(lambda: self.info.user_state(self._query_address))
             positions = state.get("assetPositions", [])
             for pos_wrap in positions:
                 pos = pos_wrap["position"]
@@ -252,7 +327,7 @@ class HyperliquidAPI:
                     except Exception as e:
                         results.append({"coin": coin, "closed_size": size, "status": "error", "error": str(e)})
             # Cancel all remaining orders
-            open_orders = await self._retry(lambda: self.info.frontend_open_orders(self.wallet.address))
+            open_orders = await self._retry(lambda: self.info.frontend_open_orders(self._query_address))
             for order in open_orders:
                 coin = order.get("coin")
                 oid = order.get("oid")
@@ -273,7 +348,7 @@ class HyperliquidAPI:
             List of order dictionaries augmented with ``triggerPx`` when present.
         """
         try:
-            orders = await self._retry(lambda: self.info.frontend_open_orders(self.wallet.address))
+            orders = await self._retry(lambda: self.info.frontend_open_orders(self._query_address))
             # Normalize trigger price if present in orderType
             for o in orders:
                 try:
@@ -301,9 +376,9 @@ class HyperliquidAPI:
         try:
             # Some SDK versions expose user_fills; fall back gracefully if absent
             if hasattr(self.info, 'user_fills'):
-                fills = await self._retry(lambda: self.info.user_fills(self.wallet.address))
+                fills = await self._retry(lambda: self.info.user_fills(self._query_address))
             elif hasattr(self.info, 'fills'):
-                fills = await self._retry(lambda: self.info.fills(self.wallet.address))
+                fills = await self._retry(lambda: self.info.fills(self._query_address))
             else:
                 return []
             if isinstance(fills, list):
@@ -337,10 +412,15 @@ class HyperliquidAPI:
     async def get_user_state(self):
         """Retrieve wallet state with enriched position PnL calculations.
 
+        With unified accounts, spot USDC is usable as perp collateral, so we
+        include it in the balance and total_value calculations.
+
         Returns:
             Dictionary with ``balance``, ``total_value``, and ``positions``.
         """
-        state = await self._retry(lambda: self.info.user_state(self.wallet.address))
+        import requests as _requests
+
+        state = await self._retry(lambda: self.info.user_state(self._query_address))
         positions = state.get("assetPositions", [])
         total_value = float(state.get("accountValue", 0.0))
         enriched_positions = []
@@ -355,6 +435,22 @@ class HyperliquidAPI:
             pos["notional_entry"] = abs(size) * entry_px
             enriched_positions.append(pos)
         balance = float(state.get("withdrawable", 0.0))
+
+        # Unified accounts: include spot USDC as available balance
+        try:
+            resp = _requests.post(
+                self.base_url + "/info",
+                json={"type": "spotClearinghouseState", "user": self._query_address},
+                timeout=10,
+            )
+            for bal in resp.json().get("balances", []):
+                if bal.get("coin", "").upper() in ("USDC", "USDT"):
+                    balance += float(bal.get("total", 0))
+                    total_value += float(bal.get("total", 0))
+                    break
+        except Exception as e:
+            logging.warning("Failed to query spot balance for unified account: %s", e)
+
         if not total_value:
             total_value = balance + sum(max(p.get("pnl", 0.0), 0.0) for p in enriched_positions)
         return {"balance": balance, "total_value": total_value, "positions": enriched_positions}

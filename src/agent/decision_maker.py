@@ -9,6 +9,7 @@ import json
 import logging
 import concurrent.futures
 from datetime import datetime
+from pathlib import Path
 
 import requests
 
@@ -181,7 +182,42 @@ class TradingAgent:
 
     # ── Stage 2: Signal Classification (Qwen3-32B) ───────────
 
+    def _load_learnings(self) -> str:
+        """Load learnings.json and format relevant entries for prompt injection."""
+        try:
+            learnings_path = Path("/root/ai-trading-agent/data/learnings.json")
+            if not learnings_path.exists():
+                return ""
+            data = json.loads(learnings_path.read_text(encoding="utf-8"))
+            parts = []
+            patterns = data.get("patterns", [])
+            if patterns:
+                recent = patterns[-10:]  # last 10 patterns
+                parts.append("Recent patterns observed:\n" + "\n".join(
+                    f"- [{p.get('symbol', '?')}] {p.get('value', p.get('action', ''))}" for p in recent
+                ))
+            changes = data.get("strategy_changes", [])
+            if changes:
+                recent = changes[-5:]
+                parts.append("Recent strategy adjustments:\n" + "\n".join(
+                    f"- [{c.get('symbol', '?')}] {c.get('action', '')}: {c.get('value', '')}" for c in recent
+                ))
+            return "\n\n".join(parts)
+        except Exception as e:
+            logging.warning("Failed to load learnings: %s", e)
+            return ""
+
     def _stage2_signals(self, normalized: str, assets: list) -> str:
+        # Load learnings for prompt injection
+        learnings_block = self._load_learnings()
+        learnings_section = ""
+        if learnings_block:
+            learnings_section = (
+                "\n\n## Learned Patterns & Adjustments (from self-improvement system)\n"
+                "Incorporate these observations into your analysis:\n"
+                f"{learnings_block}\n"
+            )
+
         payload = {
             "model": self.stage2_model,
             "messages": [
@@ -195,6 +231,7 @@ class TradingAgent:
                     '    "asset": "BTC",\n'
                     '    "bias": "long" | "short" | "neutral",\n'
                     '    "confidence": 0.0-1.0,\n'
+                    '    "market_regime": "trending_up" | "trending_down" | "ranging" | "breakout",\n'
                     '    "structure": "bullish/bearish/ranging — describe EMA alignment, HH/HL vs LH/LL",\n'
                     '    "momentum": "describe MACD regime + RSI slope",\n'
                     '    "volatility": "ATR context — expanding/contracting/normal",\n'
@@ -208,6 +245,25 @@ class TradingAgent:
                     '    "reasoning": "2-3 sentence first-principles analysis"\n'
                     "  }]\n"
                     "}\n\n"
+                    "## Market Regime Classification\n"
+                    "FIRST classify the market regime for each asset using these rules:\n"
+                    "- trending_up: EMA20 > EMA50 AND price > EMA20 — momentum is bullish\n"
+                    "- trending_down: EMA20 < EMA50 AND price < EMA20 — momentum is bearish\n"
+                    "- ranging: EMA20 and EMA50 are within 0.5% of each other, ATR is contracting\n"
+                    "- breakout: ATR expanding >20% above its 14-period average, price breaking key EMA\n\n"
+                    "## RSI Interpretation by Regime (CRITICAL)\n"
+                    "- In trending_up: RSI 55-75 CONFIRMS bullish momentum — this is NOT overbought\n"
+                    "  Only flag overbought if RSI > 80 in a trend or RSI > 70 in ranging market\n"
+                    "- In trending_down: RSI 25-45 CONFIRMS bearish momentum — this is NOT oversold\n"
+                    "  Only flag oversold if RSI < 20 in a trend or RSI < 30 in ranging market\n"
+                    "- In ranging: standard thresholds apply (overbought >70, oversold <30)\n"
+                    "- DO NOT default to neutral/hold just because RSI is above 50\n\n"
+                    "## Anti-Stall Rule\n"
+                    "- You are part of a TRADING system, not a watching system\n"
+                    "- If the data shows clear trend alignment (EMA crossover + confirming RSI + MACD),\n"
+                    "  you MUST suggest buy or sell — do not hold in confirmed trends\n"
+                    "- Only suggest hold when there is genuine conflicting evidence across indicators\n"
+                    "- Confidence for trend-aligned signals should be >= 0.5\n\n"
                     "Rules:\n"
                     "- Require multi-timeframe confluence (5m + 4h alignment) for high confidence\n"
                     "- Counter-trend signals need extra confirmation → lower confidence\n"
@@ -216,6 +272,7 @@ class TradingAgent:
                     "- Funding is a tilt, not a trigger\n"
                     "- Output ONLY valid JSON, no markdown\n"
                     "- Do NOT use /no_think or any special tokens"
+                    + learnings_section
                 )},
                 {"role": "user", "content": normalized},
             ],
@@ -273,14 +330,18 @@ class TradingAgent:
                     "1. Trust the upstream signal analysis — don't second-guess the data, focus on execution quality.\n"
                     "2. For each asset, decide: buy, sell, or hold.\n"
                     "3. Set allocation_usd based on confidence and suggested_allocation_pct from signals.\n"
-                    "4. USE LEVERAGE: minimum 3x, maximum 10x. Reduce leverage when risk_flags are present or volatility is high.\n"
+                    "   - Confidence >= 0.5: use full suggested allocation\n"
+                    "   - Confidence 0.35-0.5: use 50% of suggested allocation (reduced-size entry)\n"
+                    "   - Confidence < 0.35: hold\n"
+                    "4. USE LEVERAGE: minimum 2x, maximum 10x. Reduce leverage when risk_flags are present or volatility is high.\n"
                     "5. TP/SL rules:\n"
                     "   - BUY: tp_price > current_price, sl_price < current_price\n"
                     "   - SELL: tp_price < current_price, sl_price > current_price\n"
                     "   - Use signal tp_zone/sl_zone as guidance\n"
                     "6. exit_plan must include at least ONE explicit invalidation trigger + optional cooldown.\n"
                     "7. Cooldown: after opening/flipping, wait at least 3 bars before changing direction.\n"
-                    "8. If suggested_action is 'hold' and confidence < 0.5, always hold.\n\n"
+                    "8. If suggested_action is 'hold' and confidence < 0.35, always hold.\n"
+                    "   If confidence is 0.35-0.5, enter at HALF allocation to test the signal.\n\n"
                     "Output a JSON object with 'reasoning' (string) and 'trade_decisions' (array).\n"
                     "Each decision: {asset, action, allocation_usd, tp_price, sl_price, exit_plan, rationale}\n"
                     "Output ONLY valid JSON. No markdown, no prose outside the JSON."

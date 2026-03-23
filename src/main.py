@@ -68,7 +68,6 @@ def main():
     indicators = HyperliquidIndicators()
     agent = TradingAgent()
 
-
     start_time = datetime.now(timezone.utc)
     invocation_count = 0
     trade_log = []  # For Sharpe: list of returns
@@ -536,15 +535,16 @@ def main():
                         )
                     else:
                         add_event(f"Hold {asset}: {output.get('rationale', '')}")
-                        # Write hold to diary
-                        with open(diary_path, "a") as f:
-                            diary_entry = {
-                                "timestamp": datetime.now().isoformat(),
-                                "asset": asset,
-                                "action": "hold",
-                                "rationale": output.get("rationale", "")
-                            }
-                            f.write(json.dumps(diary_entry) + "\n")
+                        # Throttle hold diary writes: once/hour instead of every 5min
+                        if invocation_count % 12 == 0:
+                            with open(diary_path, "a") as f:
+                                diary_entry = {
+                                    "timestamp": datetime.now().isoformat(),
+                                    "asset": asset,
+                                    "action": "hold",
+                                    "rationale": output.get("rationale", "")
+                                }
+                                f.write(json.dumps(diary_entry) + "\n")
                 except Exception as e:
                     import traceback
                     add_event(f"Execution error {asset}: {e}")
@@ -620,6 +620,13 @@ def main():
 
     async def main_async():
         """Start the aiohttp server and kick off the trading loop."""
+        # Startup checks: validate wallet and fund perp account
+        wallet_ok = await hyperliquid.validate_wallet()
+        if not wallet_ok:
+            logging.error("FATAL: Wallet validation failed. Re-authorize the API wallet on Hyperliquid.")
+            sys.exit(1)
+        await hyperliquid.ensure_perp_funded()
+
         app = web.Application()
         await start_api(app)
         from src.config_loader import CONFIG as CFG

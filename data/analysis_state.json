@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-03-10T03:08:57Z",
+  "updated_at": "2026-03-23T17:39:00Z",
   "total_trades": 0,
   "symbols": {
     "BNB": {
@@ -18,6 +18,11 @@
       "flag_created_this_run": false
     },
     "SOL": {
+      "trade_count": 0,
+      "flag_exists": false,
+      "flag_created_this_run": false
+    },
+    "EIGEN": {
       "trade_count": 0,
       "flag_exists": false,
       "flag_created_this_run": false

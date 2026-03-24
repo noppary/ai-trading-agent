@@ -447,6 +447,23 @@ class HyperliquidAPI:
             enriched_positions.append(pos)
         balance = float(state.get("withdrawable", 0.0))
 
+        # ── PATCH: Use clearinghouseState instead of user_state for unified accounts ──
+        # user_state returns empty accountValue on unified accounts — use raw API call
+        if not total_value or total_value < 0.01:
+            try:
+                import requests as _req
+                resp = _req.post(
+                    self.base_url + "/info",
+                    json={"type": "clearinghouseState", "user": self._query_address},
+                    timeout=10,
+                )
+                cs = resp.json()
+                ms = cs.get("marginSummary", {})
+                total_value = float(ms.get("accountValue", 0.0))
+                balance = float(cs.get("withdrawable", 0.0))
+            except Exception as e:
+                logging.warning("Fallback clearinghouseState failed: %s", e)
+
         # Unified accounts: include spot USDC as available balance
         try:
             resp = _requests.post(

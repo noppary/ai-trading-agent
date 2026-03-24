@@ -3,6 +3,7 @@
 import sys
 import argparse
 import pathlib
+import signal
 sys.path.append(str(pathlib.Path(__file__).parent.parent))
 from src.agent.decision_maker import TradingAgent
 from src.indicators.hyperliquid_indicators import HyperliquidIndicators
@@ -18,6 +19,12 @@ import json
 from aiohttp import web
 from src.utils.formatting import format_number as fmt, format_size as fmt_sz
 from src.utils.prompt_utils import json_default, round_or_none, round_series
+from src.utils.state_manager import (
+    load_circuit_state, save_circuit_state,
+    load_active_trades, save_active_trades,
+    load_trade_log, append_trade_log_entry,
+    build_recovery_report,
+)
 
 # Self-learning engine
 import sys
@@ -28,6 +35,16 @@ load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
+# Global flag for graceful shutdown (SIGTERM handler)
+is_shutting_down = False
+
+def _sigterm_handler(signum, frame):
+    global is_shutting_down
+    is_shutting_down = True
+    logging.warning("SIGTERM received — initiating graceful shutdown")
+
+# Register SIGTERM handler
+signal.signal(signal.SIGTERM, _sigterm_handler)
 
 def clear_terminal():
     """Clear the terminal screen on Windows or POSIX systems."""
@@ -75,18 +92,91 @@ def main():
 
     start_time = datetime.now(timezone.utc)
     invocation_count = 0
-    trade_log = []  # For Sharpe: list of returns
-    active_trades = []  # {'asset','is_long','amount','entry_price','tp_oid','sl_oid','exit_plan'}
     recent_events = deque(maxlen=200)
     diary_path = "diary.jsonl"
-    initial_account_value = None
-    peak_account_value = None
-    daily_start_value = None
-    daily_start_date = None
+
+    # ── Load persisted state (Phase 1: crash-proof) ──────────────────────────
+    circuit = load_circuit_state()
+    initial_account_value = circuit.get("initial_account_value")
+    peak_account_value = circuit.get("peak_account_value")
+    daily_start_value = circuit.get("daily_start_value")
+    daily_start_date = circuit.get("daily_start_date")  # ISO date string or None
+    trading_halted = circuit.get("trading_halted", False)
+    trade_log = load_trade_log()
+    active_trades = load_active_trades()
+
     consecutive_failures = 0
-    trading_halted = False
+    last_loop_ts = None  # for /health endpoint
+
     # Perp mid-price history sampled each loop (authoritative, avoids spot/perp basis mismatch)
     price_history = {}
+
+    # ── Startup reconciliation (Phase 1 P1.3) ─────────────────────────────────
+    async def _startup_reconcile():
+        nonlocal active_trades, trading_halted
+        try:
+            state_r = await hyperliquid.get_user_state()
+            positions_r = state_r.get("assetPositions", [])
+            orders_r = await hyperliquid.get_open_orders()
+
+            report = build_recovery_report(
+                exchange_positions=[p["position"] for p in positions_r if "position" in p],
+                exchange_orders=orders_r,
+                persisted_trades=active_trades,
+            )
+
+            # 1) Positions on exchange not tracked → add to active_trades
+            for pos_wrap in report["missing_from_persisted"]:
+                pos = pos_wrap
+                coin = pos.get("coin")
+                size = float(pos.get("szi", 0) or 0)
+                entry_px = float(pos.get("entryPx", 0) or 0)
+                if not coin or abs(size) < 1e-9:
+                    continue
+                is_long = size > 0
+                # TP/SL OIDs are unknown — set to None so reconciliation loop will handle
+                active_trades.append({
+                    "asset": coin,
+                    "is_long": is_long,
+                    "amount": abs(size),
+                    "entry_price": entry_px,
+                    "tp_oid": None,
+                    "sl_oid": None,
+                    "exit_plan": "",
+                    "opened_at": datetime.now(timezone.utc).isoformat(),
+                    "_recovered": True,
+                })
+                add_event(f"RECOVERY: added {coin} {'long' if is_long else 'short'} x{abs(size):.6f} from exchange (TP/SL OIDs unknown)")
+
+            # 2) Persisted trades with no exchange position → clean up
+            for tr in report["orphaned_persisted"]:
+                add_event(f"RECOVERY: removing stale active_trade for {tr.get('asset')} (no position on exchange)")
+                try:
+                    active_trades.remove(tr)
+                except ValueError:
+                    pass
+
+            # 3) Positions missing TP or SL → log as warning (P1.3 P1.4)
+            for pos_wrap in report["orders_missing_tp_sl"]:
+                pos = pos_wrap
+                coin = pos.get("coin")
+                size = float(pos.get("szi", 0) or 0)
+                add_event(f"WARNING: {coin} position has no TP/SL orders — manual intervention may be required")
+                if trading_halted:
+                    # If halted, we shouldn't be re-opening anything — just note it
+                    continue
+                # Note: we do NOT auto-place TP/SL here (too risky without LLM validation).
+                # The loop's reconciliation will catch this every iteration.
+
+            save_active_trades(active_trades)
+            if report["missing_from_persisted"] or report["orphaned_persisted"]:
+                add_event(f"Startup reconciliation done: {len(active_trades)} active_trades tracked")
+        except Exception as e:
+            add_event(f"Startup reconciliation error: {e}")
+
+    # Run reconciliation before entering main loop
+    # (needs hyperliquid already instantiated, before the "wallet validation" in main_async)
+    # We'll call this from main_async after hyperliquid is ready.
 
     print(f"Starting trading agent for assets: {args.assets} at interval: {args.interval}")
 
@@ -108,8 +198,21 @@ def main():
     async def run_loop():
         """Main trading loop that gathers data, calls the agent, and executes trades."""
         nonlocal invocation_count, initial_account_value, peak_account_value
-        nonlocal daily_start_value, daily_start_date, consecutive_failures, trading_halted
+        nonlocal daily_start_value, daily_start_date, consecutive_failures, trading_halted, last_loop_ts
         while True:
+            # P1.8: graceful shutdown — finish current iteration, then exit cleanly
+            if is_shutting_down:
+                add_event("Graceful shutdown: persisting state and exiting")
+                save_circuit_state({
+                    "initial_account_value": initial_account_value,
+                    "peak_account_value": peak_account_value,
+                    "daily_start_value": daily_start_value,
+                    "daily_start_date": str(daily_start_date) if daily_start_date else None,
+                    "trading_halted": trading_halted,
+                    "halted_reason": None,
+                })
+                save_active_trades(active_trades)
+                break
             invocation_count += 1
             minutes_since_start = (datetime.now(timezone.utc) - start_time).total_seconds() / 60
 
@@ -131,6 +234,16 @@ def main():
             if daily_start_date != today:
                 daily_start_date = today
                 daily_start_value = account_value
+
+            # P1.1: persist circuit state after every update
+            save_circuit_state({
+                "initial_account_value": initial_account_value,
+                "peak_account_value": peak_account_value,
+                "daily_start_value": daily_start_value,
+                "daily_start_date": str(daily_start_date) if daily_start_date else None,
+                "trading_halted": trading_halted,
+                "halted_reason": None,
+            })
 
             drawdown_pct = (peak_account_value - account_value) / peak_account_value * 100 if peak_account_value else 0
             daily_loss = (daily_start_value - account_value) if daily_start_value else 0
@@ -155,6 +268,15 @@ def main():
                     f"Account value: ${account_value:.2f}\n"
                     f"All positions closed. Trading halted."
                 )
+                # P1.1: persist halted state so it survives restart
+                save_circuit_state({
+                    "initial_account_value": initial_account_value,
+                    "peak_account_value": peak_account_value,
+                    "daily_start_value": daily_start_value,
+                    "daily_start_date": str(daily_start_date) if daily_start_date else None,
+                    "trading_halted": True,
+                    "halted_reason": f"drawdown={drawdown_pct:.1f}% daily_loss=${daily_loss:.2f}",
+                })
                 await asyncio.sleep(get_interval_seconds(args.interval))
                 continue
 
@@ -221,6 +343,7 @@ def main():
                     if asset not in assets_with_positions and asset not in assets_with_orders:
                         add_event(f"Reconciling stale active trade for {asset} (no position, no orders)")
                         active_trades.remove(tr)
+                        save_active_trades(active_trades)
                         with open(diary_path, "a") as f:
                             f.write(json.dumps({
                                 "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -470,7 +593,7 @@ def main():
                         # ── DRY RUN MODE: Skip actual order placement ──
                         if CONFIG.get("dry_run_mode", False):
                             add_event(f"DRY RUN: Would {action.upper()} {asset} amount {amount:.4f} at ~{current_price}")
-                            add_event(f"DRY RUN: Would set TP={output.get("tp_price")} SL={output.get("sl_price")}")
+                            add_event(f"DRY RUN: Would set TP={output.get('tp_price')} SL={output.get('sl_price')}")
                             # Log to diary as DRY RUN
                             with open(diary_path, "a") as f:
                                 diary_entry = {
@@ -500,18 +623,56 @@ def main():
                             except Exception:
                                 continue
                         trade_log.append({"type": action, "price": current_price, "amount": amount, "exit_plan": output["exit_plan"], "filled": filled})
+                        append_trade_log_entry({"type": action, "price": current_price, "amount": amount, "exit_plan": output["exit_plan"], "filled": filled})  # P1.8: persist trade log
                         tp_oid = None
                         sl_oid = None
-                        if output["tp_price"]:
-                            tp_order = await hyperliquid.place_take_profit(asset, is_buy, amount, output["tp_price"])
+
+                        # ── P1.4: TP/SL sanity validation ─────────────────────────────
+                        tp_price = output.get("tp_price")
+                        sl_price = output.get("sl_price")
+                        tp_msg = ""
+                        sl_msg = ""
+                        if tp_price is not None and sl_price is not None:
+                            if is_buy:
+                                # Long: TP must be > entry, SL must be < entry
+                                if tp_price <= current_price:
+                                    tp_msg = f"TP {tp_price} <= entry {current_price} — skipping TP"
+                                    tp_price = None
+                                if sl_price >= current_price:
+                                    sl_msg = f"SL {sl_price} >= entry {current_price} — skipping SL"
+                                    sl_price = None
+                            else:
+                                # Short: TP must be < entry, SL must be > entry
+                                if tp_price >= current_price:
+                                    tp_msg = f"TP {tp_price} >= entry {current_price} — skipping TP"
+                                    tp_price = None
+                                if sl_price <= current_price:
+                                    sl_msg = f"SL {sl_price} <= entry {current_price} — skipping SL"
+                                    sl_price = None
+                            # Minimum TP/SL distance: 0.5% of price
+                            min_distance = current_price * 0.005
+                            if tp_price and abs(tp_price - current_price) < min_distance:
+                                tp_msg = f"TP distance {abs(tp_price-current_price)/current_price*100:.2f}% < 0.5% minimum — skipping TP"
+                                tp_price = None
+                            if sl_price and abs(sl_price - current_price) < min_distance:
+                                sl_msg = f"SL distance {abs(sl_price-current_price)/current_price*100:.2f}% < 0.5% minimum — skipping SL"
+                                sl_price = None
+                        if tp_msg:
+                            add_event(f"WARNING: {asset} {tp_msg}")
+                        if sl_msg:
+                            add_event(f"WARNING: {asset} {sl_msg}")
+                        # ── End P1.4 ────────────────────────────────────────────
+
+                        if tp_price is not None and tp_price:
+                            tp_order = await hyperliquid.place_take_profit(asset, is_buy, amount, tp_price)
                             tp_oids = hyperliquid.extract_oids(tp_order)
                             tp_oid = tp_oids[0] if tp_oids else None
-                            add_event(f"TP placed {asset} at {output['tp_price']}")
-                        if output["sl_price"]:
-                            sl_order = await hyperliquid.place_stop_loss(asset, is_buy, amount, output["sl_price"])
+                            add_event(f"TP placed {asset} at {tp_price}")
+                        if sl_price is not None and sl_price:
+                            sl_order = await hyperliquid.place_stop_loss(asset, is_buy, amount, sl_price)
                             sl_oids = hyperliquid.extract_oids(sl_order)
                             sl_oid = sl_oids[0] if sl_oids else None
-                            add_event(f"SL placed {asset} at {output['sl_price']}")
+                            add_event(f"SL placed {asset} at {sl_price}")
                         # Reconcile: if opposite-side position exists or TP/SL just filled, clear stale active_trades for this asset
                         for existing in active_trades[:]:
                             if existing.get('asset') == asset:
@@ -527,8 +688,9 @@ def main():
                             "tp_oid": tp_oid,
                             "sl_oid": sl_oid,
                             "exit_plan": output["exit_plan"],
-                            "opened_at": datetime.now().isoformat()
+                            "opened_at": datetime.now(timezone.utc).isoformat()
                         })
+                        save_active_trades(active_trades)  # P1.2: persist active_trades
                         add_event(f"{action.upper()} {asset} amount {amount:.4f} at ~{current_price}")
                         if rationale:
                             add_event(f"Post-trade rationale for {asset}: {rationale}")
@@ -541,9 +703,9 @@ def main():
                                 "allocation_usd": alloc_usd,
                                 "amount": amount,
                                 "entry_price": current_price,
-                                "tp_price": output.get("tp_price"),
+                                "tp_price": tp_price,
                                 "tp_oid": tp_oid,
-                                "sl_price": output.get("sl_price"),
+                                "sl_price": sl_price,
                                 "sl_oid": sl_oid,
                                 "exit_plan": output.get("exit_plan", ""),
                                 "rationale": output.get("rationale", ""),
@@ -586,6 +748,23 @@ def main():
                             add_event(f"Learnings updated: {n_patterns} patterns, {n_changes} strategy changes")
                 except Exception as e:
                     logging.warning("Self-learning error: %s", e)
+
+            # P1.6: update last_loop_ts for /health endpoint
+            last_loop_ts = datetime.now(timezone.utc).isoformat()
+
+            # P1.8: graceful shutdown check after each iteration
+            if is_shutting_down:
+                add_event("Graceful shutdown: persisting state and exiting")
+                save_circuit_state({
+                    "initial_account_value": initial_account_value,
+                    "peak_account_value": peak_account_value,
+                    "daily_start_value": daily_start_value,
+                    "daily_start_date": str(daily_start_date) if daily_start_date else None,
+                    "trading_halted": trading_halted,
+                    "halted_reason": None,
+                })
+                save_active_trades(active_trades)
+                break
 
             await asyncio.sleep(get_interval_seconds(args.interval))
 
@@ -650,11 +829,42 @@ def main():
         except Exception as e:
             return web.json_response({"status": "error", "error": str(e)}, status=500)
 
+    async def handle_health(request):
+        """P1.6: Health check endpoint for external monitoring."""
+        try:
+            # Check that the bot is still alive by verifying last_loop_ts is recent
+            if last_loop_ts:
+                from datetime import datetime as dt, timezone as tz
+                last = datetime.fromisoformat(last_loop_ts.replace("Z", "+00:00"))
+                age_sec = (datetime.now(tz.utc) - last).total_seconds()
+            else:
+                age_sec = None
+
+            # Quick exchange reachability check
+            try:
+                state_h = await hyperliquid.get_user_state()
+                exchange_ok = True
+            except Exception:
+                exchange_ok = False
+
+            return web.json_response({
+                "status": "ok",
+                "last_loop_ts": last_loop_ts,
+                "loop_age_sec": round(age_sec, 1) if age_sec is not None else None,
+                "exchange_ok": exchange_ok,
+                "positions_tracked": len(active_trades),
+                "trading_halted": trading_halted,
+                "invocation_count": invocation_count,
+            })
+        except Exception as e:
+            return web.json_response({"status": "error", "error": str(e)}, status=500)
+
     async def start_api(app):
         """Register HTTP endpoints for observing diary entries and logs."""
         app.router.add_get('/diary', handle_diary)
         app.router.add_get('/logs', handle_logs)
         app.router.add_post('/emergency-close', handle_emergency_close)
+        app.router.add_get('/health', handle_health)  # P1.6
 
     async def main_async():
         """Start the aiohttp server and kick off the trading loop."""
@@ -664,6 +874,9 @@ def main():
             logging.error("FATAL: Wallet validation failed. Re-authorize the API wallet on Hyperliquid.")
             sys.exit(1)
         await hyperliquid.ensure_perp_funded()
+
+        # Phase 1 P1.3: reconcile persisted state with exchange state on startup
+        await _startup_reconcile()
 
         app = web.Application()
         await start_api(app)

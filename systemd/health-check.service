@@ -7,10 +7,20 @@ Type=oneshot
 User=root
 WorkingDirectory=/root/ai-trading-agent
 ExecStart=/bin/bash -c "\
+  API_HOST=localhost; \
+  API_PORT=3000; \
   echo '=== Health Check ===' && \
   systemctl is-active ai-trading-agent && echo 'Bot: RUNNING' || echo 'Bot: STOPPED' && \
-  curl -sf http://localhost:3000/diary?limit=1 > /dev/null && echo 'HTTP API: OK' || echo 'HTTP API: DOWN' && \
-  tail -5 /root/ai-trading-agent/diary.jsonl 2>/dev/null || echo 'diary.jsonl: empty/missing' \
+  HEALTH=$(curl -sf http://${API_HOST}:${API_PORT}/health 2>&1) && \
+  if [ $? -eq 0 ]; then \
+    echo 'HTTP API: OK' && \
+    echo \"Health response: $HEALTH\" && \
+    LAST_TS=$(echo \"$HEALTH\" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get(\"last_loop_ts\",\"null\"), d.get(\"loop_age_sec\",\"?\"), d.get(\"positions_tracked\",\"?\"))' 2>/dev/null || echo 'parse error'); \
+    echo \"Last loop: $LAST_TS\"; \
+  else \
+    echo 'HTTP API: DOWN — ALERT NEEDED'; \
+  fi && \
+  tail -3 /root/ai-trading-agent/diary.jsonl 2>/dev/null || echo 'diary.jsonl: empty/missing' \
 "
 StandardOutput=journal
 StandardError=journal

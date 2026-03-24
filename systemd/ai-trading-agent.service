@@ -10,7 +10,13 @@ WorkingDirectory=/root/ai-trading-agent
 EnvironmentFile=/root/ai-trading-agent/.env
 ExecStart=/root/.local/bin/poetry run python src/main.py
 Restart=on-failure
-RestartSec=30
+RestartSec=5
+# P1.10: resource limits — prevent OOM from runaway log growth
+MemoryMax=1G
+MemoryHigh=768M
+# P1.8: graceful shutdown — give the loop time to finish and persist state
+TimeoutStopSec=30
+KillMode=process
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=ai-trading-agent

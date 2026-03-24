@@ -1,4 +1,5 @@
-"""Atomic state persistence — all files use write-to-temp + rename for crash safety."""
+"""Atomic state persistence — all files use write-to-temp + rename for crash safety.
+Files are namespaced by HYPERLIQUID_NETWORK so testnet never pollutes mainnet."""
 
 import json
 import os
@@ -8,6 +9,23 @@ from typing import Any, Optional
 from datetime import datetime, timezone
 
 log = logging.getLogger(__name__)
+
+# ── Network-aware filename resolution ─────────────────────────────────────────
+
+def _get_network() -> str:
+    """Detect network from environment. Defaults to 'mainnet'."""
+    return os.getenv("HYPERLIQUID_NETWORK", "mainnet").lower()
+
+
+def _fn(base: str) -> str:
+    """Return network-namespaced filename. e.g. circuit_state.json → mainnet_circuit_state.json."""
+    net = _get_network()
+    # Strip any existing network prefix to avoid double-prefixing
+    if base.startswith(f"{net}_"):
+        return base
+    parts = base.rsplit(".", 1)
+    return f"{parts[0]}_{net}.{parts[1]}"
+
 
 # ── Atomic write helpers ──────────────────────────────────────────────────────
 
@@ -33,12 +51,12 @@ def _safe_read(path: str, default: Any) -> Any:
 
 # ── Circuit-breaker state ────────────────────────────────────────────────────
 
-STATE_FILE = "circuit_state.json"
+_STATE_FILE = "circuit_state.json"
 
 
 def load_circuit_state() -> dict:
     """Load persisted circuit-breaker state. Returns defaults if file missing."""
-    return _safe_read(STATE_FILE, {
+    return _safe_read(_fn(_STATE_FILE), {
         "initial_account_value": None,
         "peak_account_value": None,
         "daily_start_value": None,
@@ -52,38 +70,38 @@ def load_circuit_state() -> dict:
 def save_circuit_state(state: dict) -> None:
     """Persist circuit-breaker state atomically."""
     state["last_updated"] = datetime.now(timezone.utc).isoformat()
-    _atomic_write(STATE_FILE, state)
+    _atomic_write(_fn(_STATE_FILE), state)
 
 
 # ── Active trades ────────────────────────────────────────────────────────────
 
-TRADES_FILE = "active_trades.json"
+_TRADES_FILE = "active_trades.json"
 
 
 def load_active_trades() -> list:
     """Load persisted active_trades list."""
-    return _safe_read(TRADES_FILE, [])
+    return _safe_read(_fn(_TRADES_FILE), [])
 
 
 def save_active_trades(trades: list) -> None:
     """Persist active_trades atomically."""
-    _atomic_write(TRADES_FILE, trades)
+    _atomic_write(_fn(_TRADES_FILE), trades)
 
 
 # ── Trade log (for Sharpe) ───────────────────────────────────────────────────
 
-TRADE_LOG_FILE = "trade_log.json"
+_TRADE_LOG_FILE = "trade_log.json"
 
 
 def load_trade_log() -> list:
-    return _safe_read(TRADE_LOG_FILE, [])
+    return _safe_read(_fn(_TRADE_LOG_FILE), [])
 
 
 def append_trade_log_entry(entry: dict) -> None:
     """Append one trade result to the log. Atomic append."""
-    log = load_trade_log()
-    log.append({**entry, "logged_at": datetime.now(timezone.utc).isoformat()})
-    _atomic_write(TRADE_LOG_FILE, log[-1000:])  # keep last 1000 entries
+    trade_log = load_trade_log()
+    trade_log.append({**entry, "logged_at": datetime.now(timezone.utc).isoformat()})
+    _atomic_write(_fn(_TRADE_LOG_FILE), trade_log[-1000:])  # keep last 1000 entries
 
 
 # ── Startup reconciliation ───────────────────────────────────────────────────

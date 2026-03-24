@@ -126,6 +126,7 @@ CONFIG = {
     "max_position_pct": _get_int("MAX_POSITION_PCT", 25),
     "max_total_exposure_pct": _get_int("MAX_TOTAL_EXPOSURE_PCT", 75),
     "max_open_positions": _get_int("MAX_OPEN_POSITIONS", 3),          # P2.10: cap simultaneous positions
+    "max_net_exposure_pct": _get_float("MAX_NET_EXPOSURE_PCT", 40.0), # P2.4: max net long/short as % of account
     "max_leverage": _get_int("MAX_LEVERAGE", 5),
     "consecutive_failure_limit": _get_int("CONSECUTIVE_FAILURE_LIMIT", 10),
     "trade_cooldown_bars": _get_int("TRADE_COOLDOWN_BARS", 3),        # P2.5: min bars between trades per asset

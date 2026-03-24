@@ -1,1 +1,65 @@
-{"patterns": [], "strategy_changes": [], "market_correlations": []}
+{
+  "patterns": [
+    {
+      "timestamp": "2026-03-24T03:02:33.384392+00:00",
+      "symbol": "ETH",
+      "outcome": "breakeven",
+      "regime": "trending_down",
+      "rsi": 76.46,
+      "confidence": "high",
+      "has_tp": true,
+      "has_sl": true,
+      "rr": null
+    },
+    {
+      "timestamp": "2026-03-24T04:00:37Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-03-24T06:07:14.378514+00:00",
+      "symbol": "BNB",
+      "outcome": "breakeven",
+      "regime": "trending_down",
+      "rsi": 40.0,
+      "confidence": "medium",
+      "has_tp": true,
+      "has_sl": true,
+      "rr": null
+    },
+    {
+      "timestamp": "2026-03-24T06:07:14.387072+00:00",
+      "symbol": "BTC",
+      "outcome": "breakeven",
+      "regime": "trending_down",
+      "rsi": 40.0,
+      "confidence": "medium",
+      "has_tp": true,
+      "has_sl": true,
+      "rr": null
+    }
+  ],
+  "strategy_changes": [],
+  "market_correlations": [
+    {
+      "symbol": "BTC",
+      "total_trades": 2,
+      "win_rate": 0.0,
+      "sample_period": "last_100_trades"
+    },
+    {
+      "symbol": "ETH",
+      "total_trades": 2,
+      "win_rate": 0.0,
+      "sample_period": "last_100_trades"
+    },
+    {
+      "symbol": "BNB",
+      "total_trades": 3,
+      "win_rate": 0.0,
+      "sample_period": "last_100_trades"
+    }
+  ]
+}

@@ -7,13 +7,16 @@ Stage 3: Kimi K2.5  — Final trade decisions via Together AI  (213ms TTFT)
 
 import json
 import logging
+import time
 import concurrent.futures
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 
 import requests
 
 from src.config_loader import CONFIG
+from src.utils.metrics import LLM_LATENCY, LLM_ERRORS
 
 _STAGE3_TIMEOUT = 90  # hard wall-clock limit for Stage 3 (seconds)
 
@@ -36,6 +39,14 @@ class TradingAgent:
         self.minimax_key = CONFIG.get("minimax_api_key")
         self.minimax_url = CONFIG.get("minimax_base_url")
 
+        # P2.8: Per-stage latency tracking (keep last 20 per stage for p95)
+        self._latency: dict[str, deque] = {
+            "stage1": deque(maxlen=20),
+            "stage2": deque(maxlen=20),
+            "stage3": deque(maxlen=20),
+        }
+        self._latency_thresholds = {"stage1": 30, "stage2": 45, "stage3": 60}  # seconds
+
         # Models & Providers
         self.stage1_model = CONFIG["stage1_model"]
         self.stage1_provider = CONFIG.get("stage1_provider", "openrouter")
@@ -43,6 +54,38 @@ class TradingAgent:
         self.stage2_provider = CONFIG.get("stage2_provider", "openrouter")
         self.stage3_model = CONFIG["stage3_model"]
         self.stage3_provider = CONFIG.get("stage3_provider", "together")
+
+    # ── P2.8: Latency helpers ──────────────────────────────────
+
+    def _record_latency(self, stage: str, elapsed: float):
+        """Record stage latency and log a warning if p95 exceeds threshold."""
+        self._latency[stage].append(elapsed)
+        LLM_LATENCY.labels(stage=stage).observe(elapsed)
+        logging.info("LLM latency %s: %.1fs", stage, elapsed)
+        if len(self._latency[stage]) >= 5:
+            sorted_vals = sorted(self._latency[stage])
+            p95_idx = int(len(sorted_vals) * 0.95)
+            p95 = sorted_vals[min(p95_idx, len(sorted_vals) - 1)]
+            threshold = self._latency_thresholds.get(stage, 60)
+            if p95 > threshold:
+                logging.warning("LLM DEGRADATION: %s p95=%.1fs exceeds %ds threshold", stage, p95, threshold)
+
+    def get_latency_stats(self) -> dict:
+        """Return latency stats per stage for /metrics or /health."""
+        stats = {}
+        for stage, vals in self._latency.items():
+            if vals:
+                sorted_vals = sorted(vals)
+                p95_idx = int(len(sorted_vals) * 0.95)
+                stats[stage] = {
+                    "count": len(vals),
+                    "last": round(sorted_vals[-1], 2),
+                    "p50": round(sorted_vals[len(sorted_vals) // 2], 2),
+                    "p95": round(sorted_vals[min(p95_idx, len(sorted_vals) - 1)], 2),
+                }
+            else:
+                stats[stage] = {"count": 0, "last": None, "p50": None, "p95": None}
+        return stats
 
     # ── HTTP helpers ──────────────────────────────────────────
 
@@ -119,13 +162,31 @@ class TradingAgent:
         return data
 
     def _post_stage3(self, payload: dict) -> dict:
-        poster = self._get_poster(self.stage3_provider)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(poster, payload)
+        """P2.7: Try primary provider, then fallback chain before giving up."""
+        # Build fallback chain: primary → openrouter (if primary isn't already openrouter)
+        providers = [self.stage3_provider]
+        if self.stage3_provider != "openrouter":
+            providers.append("openrouter")
+
+        last_err = None
+        for provider in providers:
             try:
-                return future.result(timeout=_STAGE3_TIMEOUT)
-            except concurrent.futures.TimeoutError:
-                raise TimeoutError(f"Stage 3 timed out after {_STAGE3_TIMEOUT}s")
+                poster = self._get_poster(provider)
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(poster, payload)
+                    try:
+                        result = future.result(timeout=_STAGE3_TIMEOUT)
+                        if provider != self.stage3_provider:
+                            logging.warning("Stage 3 succeeded via FALLBACK provider: %s", provider)
+                        return result
+                    except concurrent.futures.TimeoutError:
+                        last_err = TimeoutError(f"Stage 3 timed out after {_STAGE3_TIMEOUT}s on {provider}")
+                        logging.warning("Stage 3 timeout on %s — trying next provider", provider)
+            except Exception as e:
+                last_err = e
+                logging.warning("Stage 3 failed on %s: %s — trying next provider", provider, e)
+
+        raise last_err or RuntimeError("Stage 3 all providers exhausted")
 
     def _log_request(self, model: str, payload: dict):
         try:
@@ -169,14 +230,17 @@ class TradingAgent:
             "max_tokens": 4096,
         }
         try:
+            t0 = time.monotonic()
             poster = self._get_poster(self.stage1_provider)
             resp = poster(payload)
+            self._record_latency("stage1", time.monotonic() - t0)
             content = self._extract_content(resp)
             # Validate it's parseable JSON
             json.loads(content)
             logging.info("Stage 1 (normalize): %d chars → %d chars", len(raw_context), len(content))
             return content
         except Exception as e:
+            LLM_ERRORS.labels(stage="stage1").inc()
             logging.error("Stage 1 failed: %s — passing raw context", e)
             return raw_context
 
@@ -280,13 +344,16 @@ class TradingAgent:
             "max_tokens": 4096,
         }
         try:
+            t0 = time.monotonic()
             poster = self._get_poster(self.stage2_provider)
             resp = poster(payload)
+            self._record_latency("stage2", time.monotonic() - t0)
             content = self._extract_content(resp)
             json.loads(content)
             logging.info("Stage 2 (signals): %d chars", len(content))
             return content
         except Exception as e:
+            LLM_ERRORS.labels(stage="stage2").inc()
             logging.error("Stage 2 failed: %s — passing normalized data through", e)
             return normalized
 
@@ -363,7 +430,9 @@ class TradingAgent:
                 else:
                     payload.pop("response_format", None)
 
+                t0 = time.monotonic()
                 resp = self._post_stage3(payload)
+                self._record_latency("stage3", time.monotonic() - t0)
                 content = self._extract_content(resp)
                 parsed = json.loads(content)
 

@@ -10,6 +10,7 @@ from src.indicators.hyperliquid_indicators import HyperliquidIndicators
 from src.trading.hyperliquid_api import HyperliquidAPI
 import asyncio
 import logging
+import time
 from collections import deque, OrderedDict
 from datetime import datetime, timezone
 import math  # For Sharpe
@@ -19,6 +20,12 @@ import json
 from aiohttp import web
 from src.utils.formatting import format_number as fmt, format_size as fmt_sz
 from src.utils.prompt_utils import json_default, round_or_none, round_series
+from src.utils.metrics import (
+    ACCOUNT_VALUE, POSITIONS_COUNT, TRADING_HALTED as TRADING_HALTED_GAUGE,
+    ORDERS_TOTAL, SLIPPAGE_BPS, NET_EXPOSURE_PCT, DRAWDOWN_PCT,
+    LOOP_DURATION, LOOP_COUNT, LOOP_ERRORS, LLM_LATENCY, PIPELINE_FAILURES,
+    metrics_response,
+)
 from src.utils.state_manager import (
     load_circuit_state, save_circuit_state,
     load_active_trades, save_active_trades,
@@ -33,7 +40,15 @@ from learn_from_trades import update_learnings, load_diary
 
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+# P2.1: Structured JSON logging — machine-parseable via journalctl
+from pythonjsonlogger.json import JsonFormatter as _JsonFormatter
+
+_json_handler = logging.StreamHandler()
+_json_handler.setFormatter(_JsonFormatter(
+    fmt="%(asctime)s %(levelname)s %(name)s %(message)s",
+    rename_fields={"asctime": "ts", "levelname": "level", "name": "logger"},
+))
+logging.basicConfig(level=logging.INFO, handlers=[_json_handler], force=True)
 
 # Global flag for graceful shutdown (SIGTERM handler)
 is_shutting_down = False
@@ -114,10 +129,12 @@ def main():
     # ── Startup reconciliation (Phase 1 P1.3) ─────────────────────────────────
     async def _startup_reconcile():
         nonlocal active_trades, trading_halted
+        logging.info("========== STARTUP RECONCILIATION ==========")
         try:
             state_r = await hyperliquid.get_user_state()
             positions_r = state_r.get("assetPositions", [])
             orders_r = await hyperliquid.get_open_orders()
+            logging.info("Exchange has %d positions, %d open orders", len(positions_r), len(orders_r))
 
             report = build_recovery_report(
                 exchange_positions=[p["position"] for p in positions_r if "position" in p],
@@ -169,9 +186,17 @@ def main():
                 # The loop's reconciliation will catch this every iteration.
 
             save_active_trades(active_trades)
+            logging.info(
+                "Startup reconciliation complete: %d tracked, %d missing from persisted, %d orphaned",
+                len(active_trades),
+                len(report["missing_from_persisted"]),
+                len(report["orphaned_persisted"]),
+            )
             if report["missing_from_persisted"] or report["orphaned_persisted"]:
                 add_event(f"Startup reconciliation done: {len(active_trades)} active_trades tracked")
+            logging.info("==============================================")
         except Exception as e:
+            logging.error("Startup reconciliation FAILED: %s", e)
             add_event(f"Startup reconciliation error: {e}")
 
     # Run reconciliation before entering main loop
@@ -227,6 +252,7 @@ def main():
                 })
                 save_active_trades(active_trades)
                 break
+            _loop_start = time.monotonic()
             invocation_count += 1
             minutes_since_start = (datetime.now(timezone.utc) - start_time).total_seconds() / 60
 
@@ -259,6 +285,11 @@ def main():
                 "halted_reason": None,
             })
 
+            # P2.2: Update Prometheus gauges
+            ACCOUNT_VALUE.set(account_value or 0)
+            POSITIONS_COUNT.set(len(active_trades))
+            LOOP_COUNT.inc()
+
             drawdown_pct = (peak_account_value - account_value) / peak_account_value * 100 if peak_account_value else 0
             daily_loss = (daily_start_value - account_value) if daily_start_value else 0
             # P2.3: %-based daily loss limit (supersedes hardcoded USD)
@@ -271,6 +302,9 @@ def main():
             if daily_loss_pct > daily_loss_limit_pct:
                 trading_halted = True
                 add_event(f"CIRCUIT BREAKER: daily loss {daily_loss_pct:.2f}% (${daily_loss:.2f}) exceeds {daily_loss_limit_pct}% limit")
+
+            DRAWDOWN_PCT.set(drawdown_pct)
+            TRADING_HALTED_GAUGE.set(1 if trading_halted else 0)
 
             if trading_halted:
                 add_event(f"CIRCUIT BREAKER ACTIVE: halting trading (drawdown={drawdown_pct:.1f}%, daily_loss=${daily_loss:.2f})")
@@ -535,6 +569,7 @@ def main():
             # Track consecutive failures
             if _is_failed_outputs(outputs):
                 consecutive_failures += 1
+                PIPELINE_FAILURES.inc()
                 add_event(f"Pipeline failure #{consecutive_failures}")
                 if consecutive_failures >= CONFIG.get("consecutive_failure_limit", 10):
                     trading_halted = True
@@ -598,6 +633,30 @@ def main():
                         if len(active_trades) >= max_open:
                             add_event(f"Holding {asset}: max open positions ({max_open}) reached — skipping new entry")
                             continue
+
+                        # ── P2.4: Net directional exposure limit ──
+                        max_net_pct = CONFIG.get("max_net_exposure_pct", 40.0)
+                        if account_value and account_value > 0:
+                            long_exposure = 0.0
+                            short_exposure = 0.0
+                            for pos_wrap in state.get('positions', []):
+                                pos_sz = float(pos_wrap.get('szi', 0) or 0)
+                                pos_ep = float(pos_wrap.get('entryPx', 0) or 0)
+                                notional = abs(pos_sz) * pos_ep
+                                if pos_sz > 0:
+                                    long_exposure += notional
+                                elif pos_sz < 0:
+                                    short_exposure += notional
+                            # Include the proposed trade
+                            if is_buy:
+                                long_exposure += alloc_usd
+                            else:
+                                short_exposure += alloc_usd
+                            net_exposure = abs(long_exposure - short_exposure)
+                            net_pct = net_exposure / account_value * 100.0
+                            if net_pct > max_net_pct:
+                                add_event(f"Holding {asset}: net directional exposure {net_pct:.1f}% would exceed {max_net_pct}% limit")
+                                continue
 
                         # ── P2.5: Per-asset cooldown enforcement ──
                         cooldown_bars = CONFIG.get("trade_cooldown_bars", 3)
@@ -682,7 +741,9 @@ def main():
                             "slippage_bps": slippage_bps,
                             "amount": amount, "exit_plan": output["exit_plan"], "filled": filled
                         })
+                        ORDERS_TOTAL.labels(asset=asset, side=action).inc()
                         if slippage_bps is not None:
+                            SLIPPAGE_BPS.observe(slippage_bps)
                             add_event(f"SLIPPAGE: {asset} fill @ {fill_price} vs intent {intended_price} = {slippage_bps} bps")
                         tp_oid = None
                         sl_oid = None
@@ -814,6 +875,7 @@ def main():
 
             # P1.6: update last_loop_ts for /health endpoint
             last_loop_ts = datetime.now(timezone.utc).isoformat()
+            LOOP_DURATION.observe(time.monotonic() - _loop_start)
 
             # P1.8: graceful shutdown check after each iteration
             if is_shutting_down:
@@ -922,12 +984,25 @@ def main():
         except Exception as e:
             return web.json_response({"status": "error", "error": str(e)}, status=500)
 
+    async def handle_metrics(request):
+        """P2.2: Prometheus metrics endpoint."""
+        body, content_type = metrics_response()
+        # aiohttp rejects charset in content_type — split it out
+        ct_parts = content_type.split(";")
+        ct = ct_parts[0].strip()
+        charset = None
+        for p in ct_parts[1:]:
+            if "charset" in p:
+                charset = p.split("=")[1].strip()
+        return web.Response(body=body, content_type=ct, charset=charset)
+
     async def start_api(app):
         """Register HTTP endpoints for observing diary entries and logs."""
         app.router.add_get('/diary', handle_diary)
         app.router.add_get('/logs', handle_logs)
         app.router.add_post('/emergency-close', handle_emergency_close)
         app.router.add_get('/health', handle_health)  # P1.6
+        app.router.add_get('/metrics', handle_metrics)  # P2.2
 
     async def main_async():
         """Start the aiohttp server and kick off the trading loop."""

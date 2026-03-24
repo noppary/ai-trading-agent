@@ -19,6 +19,11 @@ from aiohttp import web
 from src.utils.formatting import format_number as fmt, format_size as fmt_sz
 from src.utils.prompt_utils import json_default, round_or_none, round_series
 
+# Self-learning engine
+import sys
+sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "data"))
+from learn_from_trades import update_learnings, load_diary
+
 load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -568,6 +573,19 @@ def main():
                 except Exception as e:
                     import traceback
                     add_event(f"Execution error {asset}: {e}")
+
+            # ── Self-learning: analyze closed trades every ~1 hour ──
+            if invocation_count % 12 == 0:
+                try:
+                    closed = load_diary(days=7)
+                    if closed:
+                        learnings = update_learnings(closed)
+                        n_patterns = len(learnings.get("patterns", []))
+                        n_changes = len(learnings.get("strategy_changes", []))
+                        if n_changes > 0:
+                            add_event(f"Learnings updated: {n_patterns} patterns, {n_changes} strategy changes")
+                except Exception as e:
+                    logging.warning("Self-learning error: %s", e)
 
             await asyncio.sleep(get_interval_seconds(args.interval))
 

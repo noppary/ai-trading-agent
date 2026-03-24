@@ -185,15 +185,29 @@ def main():
         logging.info(msg)
 
     def send_telegram_alert(message: str):
-        """Send an alert via the openclaw agent CLI (non-blocking, best-effort)."""
-        import subprocess
-        try:
-            subprocess.Popen(
-                ["openclaw", "agent", "--to", "kevin", "--message", message, "--deliver"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
-        except Exception as e:
-            logging.error("Telegram alert failed: %s", e)
+        """P2.9: Send Telegram alert with retry, delivery confirmation, and failure logging."""
+        import subprocess, time
+        cmd = ["openclaw", "agent", "--to", "kevin", "--message", message, "--deliver"]
+        for attempt in range(3):
+            try:
+                proc = subprocess.run(
+                    cmd,
+                    capture_output=True,  # capture output so we can check it
+                    timeout=15,
+                )
+                if proc.returncode == 0:
+                    logging.info("Telegram alert sent successfully")
+                    return
+                else:
+                    stderr = proc.stderr.decode(errors="replace").strip() if proc.stderr else ""
+                    logging.warning("Telegram alert attempt %d failed (exit %d): %s", attempt + 1, proc.returncode, stderr[:200])
+            except subprocess.TimeoutExpired:
+                logging.warning("Telegram alert attempt %d timed out", attempt + 1)
+            except Exception as e:
+                logging.error("Telegram alert attempt %d exception: %s", attempt + 1, e)
+            if attempt < 2:
+                time.sleep(2 ** attempt)  # exponential backoff: 1s, 2s
+        logging.error("Telegram alert FAILED after 3 attempts — last message: %s", message[:200])
 
     async def run_loop():
         """Main trading loop that gathers data, calls the agent, and executes trades."""
@@ -640,20 +654,36 @@ def main():
                                 f.write(json.dumps(diary_entry) + "\n")
                             continue
 
+                        # ── P2.6: Slippage tracking ─────────────────────────────────────────
+                        intended_price = current_price  # price when decision was made
                         order = await hyperliquid.place_buy_order(asset, amount) if is_buy else await hyperliquid.place_sell_order(asset, amount)
                         # Confirm by checking recent fills for this asset shortly after placing
                         await asyncio.sleep(1)
                         fills_check = await hyperliquid.get_recent_fills(limit=10)
                         filled = False
+                        fill_price = None
+                        slippage_bps = None
                         for fc in reversed(fills_check):
                             try:
                                 if (fc.get('coin') == asset or fc.get('asset') == asset):
                                     filled = True
+                                    fill_price = float(fc.get('px') or fc.get('price') or intended_price)
+                                    slippage_bps = round(abs(fill_price - intended_price) / intended_price * 10000, 2) if intended_price else None
                                     break
                             except Exception:
                                 continue
-                        trade_log.append({"type": action, "price": current_price, "amount": amount, "exit_plan": output["exit_plan"], "filled": filled})
-                        append_trade_log_entry({"type": action, "price": current_price, "amount": amount, "exit_plan": output["exit_plan"], "filled": filled})  # P1.8: persist trade log
+                        trade_log.append({
+                            "type": action, "price": intended_price, "fill_price": fill_price,
+                            "slippage_bps": slippage_bps,
+                            "amount": amount, "exit_plan": output["exit_plan"], "filled": filled
+                        })
+                        append_trade_log_entry({
+                            "type": action, "price": intended_price, "fill_price": fill_price,
+                            "slippage_bps": slippage_bps,
+                            "amount": amount, "exit_plan": output["exit_plan"], "filled": filled
+                        })
+                        if slippage_bps is not None:
+                            add_event(f"SLIPPAGE: {asset} fill @ {fill_price} vs intent {intended_price} = {slippage_bps} bps")
                         tp_oid = None
                         sl_oid = None
 
@@ -732,7 +762,9 @@ def main():
                                 "action": action,
                                 "allocation_usd": alloc_usd,
                                 "amount": amount,
-                                "entry_price": current_price,
+                                "entry_price": intended_price,
+                                "fill_price": fill_price,
+                                "slippage_bps": slippage_bps,
                                 "tp_price": tp_price,
                                 "tp_oid": tp_oid,
                                 "sl_price": sl_price,
@@ -744,10 +776,11 @@ def main():
                                 "filled": filled
                             }
                             f.write(json.dumps(diary_entry) + "\n")
+                        slippage_str = f" | Slip: {slippage_bps} bps" if slippage_bps is not None else ""
                         send_telegram_alert(
                             f"📊 {action.upper()} {asset}\n"
                             f"Amount: {amount:.4f} (~${alloc_usd:.0f})\n"
-                            f"Price: ${current_price:.2f}\n"
+                            f"Price: ${current_price:.2f}{slippage_str}\n"
                             f"TP: {output.get('tp_price')}, SL: {output.get('sl_price')}"
                         )
                     else:

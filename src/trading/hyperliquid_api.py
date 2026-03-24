@@ -8,9 +8,11 @@ the trading agent can depend on predictable, non-blocking IO.
 
 import asyncio
 import logging
+import time
 import aiohttp
 from typing import TYPE_CHECKING
 from src.config_loader import CONFIG
+from src.utils.metrics import EXCHANGE_LATENCY, EXCHANGE_ERRORS
 from hyperliquid.exchange import Exchange
 from hyperliquid.info import Info
 from hyperliquid.utils import constants  # For MAINNET/TESTNET
@@ -162,7 +164,7 @@ class HyperliquidAPI:
         except (ValueError, AttributeError, RuntimeError) as e:
             logging.error("Failed to reset Hyperliquid clients: %s", e)
 
-    async def _retry(self, fn, *args, max_attempts: int = 3, backoff_base: float = 0.5, reset_on_fail: bool = True, to_thread: bool = True, **kwargs):
+    async def _retry(self, fn, *args, max_attempts: int = 3, backoff_base: float = 0.5, reset_on_fail: bool = True, to_thread: bool = True, label: str = "", **kwargs):
         """Retry helper with exponential backoff and optional thread offloading.
 
         Args:
@@ -176,6 +178,7 @@ class HyperliquidAPI:
             reset_on_fail: Whether to rebuild Hyperliquid clients after a
                 failure.
             to_thread: If ``True`` the callable is executed in a worker thread.
+            label: Optional label for metrics tracking.
             **kwargs: Keyword arguments forwarded to ``fn``.
 
         Returns:
@@ -184,14 +187,21 @@ class HyperliquidAPI:
         Raises:
             Exception: Propagates any exception raised by ``fn`` after retries.
         """
+        method_label = label or getattr(fn, "__name__", "unknown")
         last_err = None
         for attempt in range(max_attempts):
             try:
+                t0 = time.monotonic()
                 if to_thread:
-                    return await asyncio.to_thread(fn, *args, **kwargs)
-                return await fn(*args, **kwargs)
+                    result = await asyncio.to_thread(fn, *args, **kwargs)
+                else:
+                    result = await fn(*args, **kwargs)
+                # P3.7: Track exchange API latency
+                EXCHANGE_LATENCY.labels(method=method_label).observe(time.monotonic() - t0)
+                return result
             except (WebSocketConnectionClosedException, aiohttp.ClientError, ConnectionError, TimeoutError, socket.timeout) as e:
                 last_err = e
+                EXCHANGE_ERRORS.labels(method=method_label).inc()
                 logging.warning("HL call failed (attempt %s/%s): %s", attempt + 1, max_attempts, e)
                 if reset_on_fail:
                     self._reset_clients()
@@ -200,6 +210,7 @@ class HyperliquidAPI:
             except (RuntimeError, ValueError, KeyError, AttributeError) as e:
                 # Unknown errors: don't spin forever, but allow a quick reset once
                 last_err = e
+                EXCHANGE_ERRORS.labels(method=method_label).inc()
                 logging.warning("HL call unexpected error (attempt %s/%s): %s", attempt + 1, max_attempts, e)
                 if reset_on_fail and attempt == 0:
                     self._reset_clients()

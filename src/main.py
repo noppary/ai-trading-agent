@@ -31,6 +31,7 @@ from src.utils.state_manager import (
     load_active_trades, save_active_trades,
     load_trade_log, append_trade_log_entry,
     build_recovery_report,
+    append_diary_entry, migrate_from_json,
 )
 
 # Self-learning engine
@@ -556,7 +557,8 @@ def main():
                     return True
 
             try:
-                outputs = agent.decide_trade(args.assets, context)
+                # P3.4: Run blocking LLM pipeline in a thread so aiohttp stays responsive
+                outputs = await asyncio.to_thread(agent.decide_trade, args.assets, context)
                 if not isinstance(outputs, dict):
                     add_event(f"Invalid output format (expected dict): {outputs}")
                     outputs = {}
@@ -591,7 +593,7 @@ def main():
                 ])
                 context_retry = json.dumps(context_retry_payload, default=json_default)
                 try:
-                    outputs = agent.decide_trade(args.assets, context_retry)
+                    outputs = await asyncio.to_thread(agent.decide_trade, args.assets, context_retry)
                     if not isinstance(outputs, dict):
                         add_event(f"Retry invalid format: {outputs}")
                         outputs = {}
@@ -679,6 +681,32 @@ def main():
                         if cooldown_active:
                             continue
 
+                        # ── P3.6: Per-trade max loss limit ──
+                        max_trade_pct = CONFIG.get("max_single_trade_pct", 10.0)
+                        max_trade_usd = account_value * (max_trade_pct / 100.0) if account_value else 0
+                        if alloc_usd > max_trade_usd > 0:
+                            add_event(f"Capping {asset} allocation ${alloc_usd:.2f} → ${max_trade_usd:.2f} (max single trade {max_trade_pct}%)")
+                            alloc_usd = max_trade_usd
+
+                        # ── P3.10: Correlation-aware position sizing ──
+                        corr_reduction = CONFIG.get("correlation_reduction_pct", 30.0) / 100.0
+                        corr_pairs_raw = CONFIG.get("correlated_pairs", [])
+                        correlated_with = set()
+                        for pair_str in corr_pairs_raw:
+                            parts = [p.strip() for p in pair_str.split(",")]
+                            if asset in parts:
+                                correlated_with.update(p for p in parts if p != asset)
+                        # Check if any correlated asset has a same-direction position
+                        for tr in active_trades:
+                            tr_asset = tr.get("asset")
+                            if tr_asset in correlated_with:
+                                tr_is_long = tr.get("is_long", True)
+                                if tr_is_long == is_buy:
+                                    reduced = alloc_usd * (1 - corr_reduction)
+                                    add_event(f"CORR: {asset} same direction as {tr_asset} — reducing ${alloc_usd:.2f} → ${reduced:.2f} (-{corr_reduction*100:.0f}%)")
+                                    alloc_usd = reduced
+                                    break
+
                         # ── Allocation caps ──
                         max_per_asset = account_value * (CONFIG.get("max_position_pct", 25) / 100.0)
                         current_exposure = sum(
@@ -711,6 +739,7 @@ def main():
                                     "dry_run": True
                                 }
                                 f.write(json.dumps(diary_entry) + "\n")
+                            append_diary_entry(diary_entry)
                             continue
 
                         # ── P2.6: Slippage tracking ─────────────────────────────────────────
@@ -837,6 +866,7 @@ def main():
                                 "filled": filled
                             }
                             f.write(json.dumps(diary_entry) + "\n")
+                        append_diary_entry(diary_entry)
                         slippage_str = f" | Slip: {slippage_bps} bps" if slippage_bps is not None else ""
                         send_telegram_alert(
                             f"📊 {action.upper()} {asset}\n"
@@ -856,9 +886,69 @@ def main():
                                     "rationale": output.get("rationale", "")
                                 }
                                 f.write(json.dumps(diary_entry) + "\n")
+                                append_diary_entry(diary_entry)
                 except Exception as e:
                     import traceback
                     add_event(f"Execution error {asset}: {e}")
+
+            # ── P3.2: Trailing stop-loss ──────────────────────────────────────────
+            if CONFIG.get("trailing_stop_enabled", True) and active_trades and not trading_halted:
+                atr_mult = CONFIG.get("trailing_stop_atr_mult", 2.0)
+                activation_pct = CONFIG.get("trailing_stop_activation_pct", 1.0)
+                for tr in active_trades:
+                    try:
+                        t_asset = tr.get("asset")
+                        if not t_asset or not tr.get("sl_oid"):
+                            continue
+                        t_entry = tr.get("entry_price", 0)
+                        t_is_long = tr.get("is_long", True)
+                        if not t_entry:
+                            continue
+                        t_current = await hyperliquid.get_current_price(t_asset)
+                        if not t_current:
+                            continue
+
+                        # Check if trade is in enough profit to activate trailing
+                        if t_is_long:
+                            profit_pct = (t_current - t_entry) / t_entry * 100
+                        else:
+                            profit_pct = (t_entry - t_current) / t_entry * 100
+                        if profit_pct < activation_pct:
+                            continue
+
+                        # Compute ATR-based trailing SL
+                        atr = indicators.fetch_value("atr", t_asset, "4h", params={"period": 14})
+                        if not atr or atr <= 0:
+                            continue
+
+                        if t_is_long:
+                            new_sl = t_current - (atr * atr_mult)
+                            old_sl = tr.get("trailing_sl") or tr.get("entry_price", 0) * 0.95
+                            # Only move SL up, never down
+                            if new_sl <= old_sl:
+                                continue
+                        else:
+                            new_sl = t_current + (atr * atr_mult)
+                            old_sl = tr.get("trailing_sl") or tr.get("entry_price", 0) * 1.05
+                            # Only move SL down, never up
+                            if new_sl >= old_sl:
+                                continue
+
+                        # Cancel old SL and place new one
+                        try:
+                            await hyperliquid.cancel_order(t_asset, tr["sl_oid"])
+                            amount = tr.get("amount", 0)
+                            sl_result = await hyperliquid.place_stop_loss(t_asset, t_is_long, amount, round(new_sl, 2))
+                            new_oids = hyperliquid.extract_oids(sl_result)
+                            if new_oids:
+                                tr["sl_oid"] = new_oids[0]
+                                tr["trailing_sl"] = new_sl
+                                save_active_trades(active_trades)
+                                add_event(f"TRAILING SL: {t_asset} moved SL → ${new_sl:.2f} (profit {profit_pct:.1f}%, ATR={atr:.2f})")
+                        except Exception as e:
+                            add_event(f"Trailing SL error for {t_asset}: {e}")
+                    except Exception as e:
+                        logging.warning("Trailing stop check error for %s: %s", tr.get("asset", "?"), e)
 
             # ── Self-learning: analyze closed trades every ~1 hour ──
             if invocation_count % 12 == 0:
@@ -1006,6 +1096,9 @@ def main():
 
     async def main_async():
         """Start the aiohttp server and kick off the trading loop."""
+        # P3.1: Migrate JSON state files to SQLite on first run
+        migrate_from_json()
+
         # Startup checks: validate wallet and fund perp account
         wallet_ok = await hyperliquid.validate_wallet()
         if not wallet_ok:

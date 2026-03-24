@@ -38,6 +38,16 @@ LLM_LATENCY = Histogram(
 LLM_ERRORS = Counter("trading_llm_errors_total", "LLM call failures", ["stage"])
 PIPELINE_FAILURES = Counter("trading_pipeline_failures_total", "Consecutive pipeline failures")
 
+# ── Exchange API metrics ─────────────────────────────────────────────────────
+
+EXCHANGE_LATENCY = Histogram(
+    "trading_exchange_latency_seconds",
+    "Hyperliquid API round-trip time",
+    ["method"],
+    buckets=[0.1, 0.25, 0.5, 1, 2, 5, 10, 20],
+)
+EXCHANGE_ERRORS = Counter("trading_exchange_errors_total", "Exchange API errors", ["method"])
+
 
 def metrics_response():
     """Return (body, content_type) for an aiohttp response."""

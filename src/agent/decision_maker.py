@@ -87,6 +87,31 @@ class TradingAgent:
                 stats[stage] = {"count": 0, "last": None, "p50": None, "p95": None}
         return stats
 
+    # ── P3.8: Rate limit tracking ────────────────────────────
+
+    def _check_rate_limits(self, resp: requests.Response, provider: str):
+        """Parse rate limit headers and warn when approaching limits."""
+        remaining = resp.headers.get("x-ratelimit-remaining") or resp.headers.get("X-RateLimit-Remaining")
+        limit = resp.headers.get("x-ratelimit-limit") or resp.headers.get("X-RateLimit-Limit")
+        retry_after = resp.headers.get("retry-after") or resp.headers.get("Retry-After")
+
+        if retry_after:
+            logging.warning("RATE LIMIT: %s Retry-After=%s — backing off", provider, retry_after)
+            try:
+                time.sleep(min(float(retry_after), 30))
+            except (ValueError, TypeError):
+                time.sleep(5)
+            return
+
+        if remaining is not None and limit is not None:
+            try:
+                rem, lim = int(remaining), int(limit)
+                usage_pct = ((lim - rem) / lim * 100) if lim > 0 else 0
+                if rem <= 5 or usage_pct > 80:
+                    logging.warning("RATE LIMIT: %s %d/%d remaining (%.0f%% used)", provider, rem, lim, usage_pct)
+            except (ValueError, TypeError):
+                pass
+
     # ── HTTP helpers ──────────────────────────────────────────
 
     def _get_poster(self, provider: str):
@@ -115,6 +140,7 @@ class TradingAgent:
         self._log_request(model, payload)
 
         resp = requests.post(self.openrouter_url, headers=headers, json=payload, timeout=60)
+        self._check_rate_limits(resp, "openrouter")
         if resp.status_code != 200:
             logging.error("OpenRouter %s error: %s - %s", model, resp.status_code, resp.text[:300])
         resp.raise_for_status()
@@ -132,6 +158,7 @@ class TradingAgent:
         self._log_request(model, payload)
 
         resp = requests.post(self.together_url, headers=headers, json=payload, timeout=60)
+        self._check_rate_limits(resp, "together")
         if resp.status_code != 200:
             logging.error("Together %s error: %s - %s", model, resp.status_code, resp.text[:300])
         resp.raise_for_status()

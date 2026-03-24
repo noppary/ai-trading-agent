@@ -39,25 +39,47 @@
       "has_tp": true,
       "has_sl": true,
       "rr": null
+    },
+    {
+      "timestamp": "2026-03-24T09:46:52.995118+00:00",
+      "symbol": "BTC",
+      "outcome": "breakeven",
+      "regime": "trending_up",
+      "rsi": 70000.0,
+      "confidence": "medium",
+      "has_tp": true,
+      "has_sl": true,
+      "rr": null
+    },
+    {
+      "timestamp": "2026-03-24T09:46:52.996177+00:00",
+      "symbol": "BNB",
+      "outcome": "breakeven",
+      "regime": "unknown",
+      "rsi": 20.0,
+      "confidence": "high",
+      "has_tp": true,
+      "has_sl": true,
+      "rr": null
     }
   ],
   "strategy_changes": [],
   "market_correlations": [
     {
       "symbol": "BTC",
-      "total_trades": 2,
+      "total_trades": 10,
       "win_rate": 0.0,
       "sample_period": "last_100_trades"
     },
     {
       "symbol": "ETH",
-      "total_trades": 2,
+      "total_trades": 10,
       "win_rate": 0.0,
       "sample_period": "last_100_trades"
     },
     {
       "symbol": "BNB",
-      "total_trades": 3,
+      "total_trades": 15,
       "win_rate": 0.0,
       "sample_period": "last_100_trades"
     }

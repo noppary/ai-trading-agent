@@ -22,6 +22,15 @@ def _get_bool(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _get_float(name: str, default: float | None = None) -> float | None:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        raise RuntimeError(f"Invalid float for {name}: {raw}")
+
 def _get_int(name: str, default: int | None = None) -> int | None:
     raw = os.getenv(name)
     if raw is None or raw.strip() == "":
@@ -112,9 +121,12 @@ CONFIG = {
     "api_port": _get_env("APP_PORT") or _get_env("API_PORT") or "3000",
     # Circuit breaker / risk limits
     "max_drawdown_pct": _get_int("MAX_DRAWDOWN_PCT", 15),
-    "daily_loss_limit_usd": _get_int("DAILY_LOSS_LIMIT_USD", 50),
+    "daily_loss_limit_usd": _get_int("DAILY_LOSS_LIMIT_USD", 50),   # legacy, superseded by daily_loss_limit_pct
+    "daily_loss_limit_pct": _get_float("DAILY_LOSS_LIMIT_PCT", 3.0),  # P2.3: % of daily_start_value
     "max_position_pct": _get_int("MAX_POSITION_PCT", 25),
     "max_total_exposure_pct": _get_int("MAX_TOTAL_EXPOSURE_PCT", 75),
+    "max_open_positions": _get_int("MAX_OPEN_POSITIONS", 3),          # P2.10: cap simultaneous positions
     "max_leverage": _get_int("MAX_LEVERAGE", 5),
     "consecutive_failure_limit": _get_int("CONSECUTIVE_FAILURE_LIMIT", 10),
+    "trade_cooldown_bars": _get_int("TRADE_COOLDOWN_BARS", 3),        # P2.5: min bars between trades per asset
 }

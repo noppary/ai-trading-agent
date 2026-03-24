@@ -247,13 +247,16 @@ def main():
 
             drawdown_pct = (peak_account_value - account_value) / peak_account_value * 100 if peak_account_value else 0
             daily_loss = (daily_start_value - account_value) if daily_start_value else 0
+            # P2.3: %-based daily loss limit (supersedes hardcoded USD)
+            daily_loss_limit_pct = CONFIG.get("daily_loss_limit_pct", 3.0)
+            daily_loss_pct = (daily_loss / daily_start_value * 100.0) if daily_start_value and daily_start_value > 0 else 0
 
             if drawdown_pct > CONFIG.get("max_drawdown_pct", 15):
                 trading_halted = True
                 add_event(f"CIRCUIT BREAKER: drawdown {drawdown_pct:.1f}% exceeds limit")
-            if daily_loss > CONFIG.get("daily_loss_limit_usd", 50):
+            if daily_loss_pct > daily_loss_limit_pct:
                 trading_halted = True
-                add_event(f"CIRCUIT BREAKER: daily loss ${daily_loss:.2f} exceeds limit")
+                add_event(f"CIRCUIT BREAKER: daily loss {daily_loss_pct:.2f}% (${daily_loss:.2f}) exceeds {daily_loss_limit_pct}% limit")
 
             if trading_halted:
                 add_event(f"CIRCUIT BREAKER ACTIVE: halting trading (drawdown={drawdown_pct:.1f}%, daily_loss=${daily_loss:.2f})")
@@ -264,7 +267,7 @@ def main():
                 send_telegram_alert(
                     f"🚨 CIRCUIT BREAKER TRIGGERED\n"
                     f"Drawdown: {drawdown_pct:.1f}%\n"
-                    f"Daily loss: ${daily_loss:.2f}\n"
+                    f"Daily loss: {daily_loss_pct:.2f}% (${daily_loss:.2f})\n"
                     f"Account value: ${account_value:.2f}\n"
                     f"All positions closed. Trading halted."
                 )
@@ -275,7 +278,7 @@ def main():
                     "daily_start_value": daily_start_value,
                     "daily_start_date": str(daily_start_date) if daily_start_date else None,
                     "trading_halted": True,
-                    "halted_reason": f"drawdown={drawdown_pct:.1f}% daily_loss=${daily_loss:.2f}",
+                    "halted_reason": f"drawdown={drawdown_pct:.1f}% daily_loss_pct={daily_loss_pct:.2f}%",
                 })
                 await asyncio.sleep(get_interval_seconds(args.interval))
                 continue
@@ -574,6 +577,33 @@ def main():
                         alloc_usd = float(output.get("allocation_usd", 0.0))
                         if alloc_usd <= 0:
                             add_event(f"Holding {asset}: zero/negative allocation")
+                            continue
+
+                        # ── P2.10: Max open positions cap ──
+                        max_open = CONFIG.get("max_open_positions", 3)
+                        if len(active_trades) >= max_open:
+                            add_event(f"Holding {asset}: max open positions ({max_open}) reached — skipping new entry")
+                            continue
+
+                        # ── P2.5: Per-asset cooldown enforcement ──
+                        cooldown_bars = CONFIG.get("trade_cooldown_bars", 3)
+                        cooldown_active = False
+                        for tr in active_trades:
+                            if tr.get("asset") == asset:
+                                opened_at = tr.get("opened_at")
+                                if opened_at:
+                                    try:
+                                        opened_ts = datetime.fromisoformat(opened_at.replace("Z", "+00:00"))
+                                        bars_elapsed = (datetime.now(timezone.utc) - opened_ts).total_seconds() / (
+                                            get_interval_seconds(args.interval)
+                                        )
+                                        if bars_elapsed < cooldown_bars:
+                                            add_event(f"Holding {asset}: cooldown active ({bars_elapsed:.1f}/{cooldown_bars} bars elapsed)")
+                                            cooldown_active = True
+                                            break
+                                    except Exception:
+                                        pass
+                        if cooldown_active:
                             continue
 
                         # ── Allocation caps ──

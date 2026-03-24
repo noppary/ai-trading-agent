@@ -18,7 +18,7 @@ import requests
 from src.config_loader import CONFIG
 from src.utils.metrics import LLM_LATENCY, LLM_ERRORS
 
-_STAGE3_TIMEOUT = 90  # hard wall-clock limit for Stage 3 (seconds)
+_STAGE3_TIMEOUT = 200  # hard wall-clock limit for Stage 3 (seconds) — reasoning models need more
 
 
 class TradingAgent:
@@ -139,7 +139,10 @@ class TradingAgent:
         logging.info("Stage request → OpenRouter (%s)", model)
         self._log_request(model, payload)
 
-        resp = requests.post(self.openrouter_url, headers=headers, json=payload, timeout=60)
+        # Reasoning models (R1, etc.) need longer timeouts for thinking
+        model = payload.get("model", "")
+        req_timeout = 180 if any(t in model.lower() for t in ["-r1", "/r1", "reasoning"]) else 60
+        resp = requests.post(self.openrouter_url, headers=headers, json=payload, timeout=req_timeout)
         self._check_rate_limits(resp, "openrouter")
         if resp.status_code != 200:
             logging.error("OpenRouter %s error: %s - %s", model, resp.status_code, resp.text[:300])
@@ -226,7 +229,29 @@ class TradingAgent:
 
     def _extract_content(self, resp_json: dict) -> str:
         try:
-            return resp_json["choices"][0]["message"]["content"] or ""
+            import re
+            msg = resp_json["choices"][0]["message"]
+            content = msg.get("content") or ""
+
+            # DeepSeek models may put the response in reasoning_content
+            if not content.strip() and msg.get("reasoning_content"):
+                content = msg["reasoning_content"]
+                logging.info("Using reasoning_content (content was empty)")
+
+            # Strip <think>...</think> blocks (DeepSeek R1/V3 thinking wrapper)
+            if "<think>" in content:
+                stripped = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+                if stripped:
+                    content = stripped
+
+            # Extract JSON from markdown code blocks (DeepSeek V3/R1 wrap output in ```json ... ```)
+            stripped_content = content.strip()
+            if stripped_content.startswith("```"):
+                json_match = re.search(r"```(?:json)?\s*\n?(.*?)```", stripped_content, re.DOTALL)
+                if json_match:
+                    content = json_match.group(1).strip()
+
+            return content
         except (KeyError, IndexError, TypeError):
             return ""
 
@@ -376,6 +401,16 @@ class TradingAgent:
             resp = poster(payload)
             self._record_latency("stage2", time.monotonic() - t0)
             content = self._extract_content(resp)
+            if not content.strip():
+                # Log raw response keys for debugging
+                try:
+                    msg = resp.get("choices", [{}])[0].get("message", {})
+                    logging.warning("Stage 2 empty content. Message keys: %s, finish_reason: %s",
+                                    list(msg.keys()),
+                                    resp.get("choices", [{}])[0].get("finish_reason"))
+                except Exception:
+                    logging.warning("Stage 2 empty content. Raw keys: %s", list(resp.keys()) if isinstance(resp, dict) else type(resp))
+                raise ValueError("Stage 2 returned empty content")
             json.loads(content)
             logging.info("Stage 2 (signals): %d chars", len(content))
             return content
@@ -446,10 +481,13 @@ class TradingAgent:
             "max_tokens": 4096,
         }
 
+        # Skip json_schema for reasoning models (DeepSeek R1, etc.) — they don't support it
+        is_reasoning_model = any(t in self.stage3_model.lower() for t in ["-r1", "/r1", "reasoning"])
+
         # Try with response_format first, fall back without
         for attempt in range(2):
             try:
-                if attempt == 0:
+                if attempt == 0 and not is_reasoning_model:
                     payload["response_format"] = {
                         "type": "json_schema",
                         "json_schema": {"name": "trade_decisions", "strict": True, "schema": schema},

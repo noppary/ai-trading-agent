@@ -459,36 +459,43 @@ def main():
                 "recent_fills": recent_fills_struct,
             }
 
-            # Gather data for ALL assets first
-            market_sections = []
-            asset_prices = {}
-            for asset in args.assets:
+            # ── P1.10: Data gathering (Parallelized for speed) ──
+            async def fetch_market_data(asset):
                 try:
                     current_price = await hyperliquid.get_current_price(asset)
-                    asset_prices[asset] = current_price
                     if asset not in price_history:
                         price_history[asset] = deque(maxlen=60)
                     price_history[asset].append({"t": datetime.now(timezone.utc).isoformat(), "mid": round_or_none(current_price, 2)})
-                    oi = await hyperliquid.get_open_interest(asset)
-                    funding = await hyperliquid.get_funding_rate(asset)
-
+                    
+                    # Fetch OI, funding, and indicators in parallel for each asset
+                    oi_task = hyperliquid.get_open_interest(asset)
+                    funding_task = hyperliquid.get_funding_rate(asset)
+                    
                     intraday_tf = "5m"
-                    ema_series = indicators.fetch_series("ema", asset, intraday_tf, results=10, params={"period": 20})
-                    macd_series = indicators.fetch_series("macd", asset, intraday_tf, results=10)
-                    rsi7_series = indicators.fetch_series("rsi", asset, intraday_tf, results=10, params={"period": 7})
-                    rsi14_series = indicators.fetch_series("rsi", asset, intraday_tf, results=10, params={"period": 14})
+                    ema_task = asyncio.to_thread(indicators.fetch_series, "ema", asset, intraday_tf, results=10, params={"period": 20})
+                    macd_task = asyncio.to_thread(indicators.fetch_series, "macd", asset, intraday_tf, results=10)
+                    rsi7_task = asyncio.to_thread(indicators.fetch_series, "rsi", asset, intraday_tf, results=10, params={"period": 7})
+                    rsi14_task = asyncio.to_thread(indicators.fetch_series, "rsi", asset, intraday_tf, results=10, params={"period": 14})
+                    
+                    lt_ema20_task = asyncio.to_thread(indicators.fetch_value, "ema", asset, "4h", params={"period": 20})
+                    lt_ema50_task = asyncio.to_thread(indicators.fetch_value, "ema", asset, "4h", params={"period": 50})
+                    lt_atr3_task = asyncio.to_thread(indicators.fetch_value, "atr", asset, "4h", params={"period": 3})
+                    lt_atr14_task = asyncio.to_thread(indicators.fetch_value, "atr", asset, "4h", params={"period": 14})
+                    lt_macd_task = asyncio.to_thread(indicators.fetch_series, "macd", asset, "4h", results=10)
+                    lt_rsi_task = asyncio.to_thread(indicators.fetch_series, "rsi", asset, "4h", results=10, params={"period": 14})
 
-                    lt_ema20 = indicators.fetch_value("ema", asset, "4h", params={"period": 20})
-                    lt_ema50 = indicators.fetch_value("ema", asset, "4h", params={"period": 50})
-                    lt_atr3 = indicators.fetch_value("atr", asset, "4h", params={"period": 3})
-                    lt_atr14 = indicators.fetch_value("atr", asset, "4h", params={"period": 14})
-                    lt_macd_series = indicators.fetch_series("macd", asset, "4h", results=10)
-                    lt_rsi_series = indicators.fetch_series("rsi", asset, "4h", results=10, params={"period": 14})
+                    results = await asyncio.gather(
+                        oi_task, funding_task, ema_task, macd_task, rsi7_task, rsi14_task,
+                        lt_ema20_task, lt_ema50_task, lt_atr3_task, lt_atr14_task, lt_macd_task, lt_rsi_task
+                    )
+                    
+                    oi, funding, ema_series, macd_series, rsi7_series, rsi14_series, \
+                    lt_ema20, lt_ema50, lt_atr3, lt_atr14, lt_macd_series, lt_rsi_series = results
 
                     recent_mids = [entry["mid"] for entry in list(price_history.get(asset, []))[-10:]]
                     funding_annualized = round(funding * 24 * 365 * 100, 2) if funding else None
 
-                    market_sections.append({
+                    return {
                         "asset": asset,
                         "current_price": round_or_none(current_price, 2),
                         "intraday": {
@@ -515,10 +522,27 @@ def main():
                         "funding_rate": round_or_none(funding, 8),
                         "funding_annualized_pct": funding_annualized,
                         "recent_mid_prices": recent_mids
-                    })
+                    }, current_price
                 except Exception as e:
                     add_event(f"Data gather error {asset}: {e}")
-                    continue
+                    return None, None
+
+            # Gather data for ALL assets in parallel
+            tasks = [fetch_market_data(asset) for asset in args.assets]
+            data_results = await asyncio.gather(*tasks)
+            
+            market_sections = []
+            asset_prices = {}
+            for i, (section, price) in enumerate(data_results):
+                if section:
+                    market_sections.append(section)
+                    asset_prices[args.assets[i]] = price
+
+            # P1.11: Warning for critically low balance
+            if account_value and account_value < 10.0:
+                add_event(f"CRITICAL: Account value ${account_value:.2f} is below $10 minimum notional. Most trades will fail.")
+                if invocation_count % 12 == 0:
+                    send_telegram_alert(f"⚠️ LOW BALANCE: ${account_value:.2f}\nTrading may be halted due to exchange minimums.")
 
             # Single LLM call with all assets
             context_payload = OrderedDict([
@@ -715,8 +739,11 @@ def main():
                         )
                         max_remaining = account_value * (CONFIG.get("max_total_exposure_pct", 75) / 100.0) - current_exposure
                         alloc_usd = min(alloc_usd, max_per_asset, max(0, max_remaining), state['balance'] * 0.9)
-                        if alloc_usd <= 0:
-                            add_event(f"Holding {asset}: allocation capped to zero")
+
+                        # ── P1.13: Minimum notional check (prevent "fill=None" failures) ──
+                        min_notional = CONFIG.get("min_notional_usd", 11.0)
+                        if alloc_usd < min_notional:
+                            add_event(f"Holding {asset}: allocation ${alloc_usd:.2f} below minimum notional ${min_notional}")
                             continue
 
                         amount = alloc_usd / current_price
@@ -963,10 +990,15 @@ def main():
                 except Exception as e:
                     logging.warning("Self-learning error: %s", e)
 
+            # P1.12: Maintain consistent cadence by accounting for loop duration
+            loop_elapsed = time.monotonic() - _loop_start
+            interval_sec = get_interval_seconds(args.interval)
+            sleep_time = max(0, interval_sec - loop_elapsed)
+            
             # P1.6: update last_loop_ts for /health endpoint
             last_loop_ts = datetime.now(timezone.utc).isoformat()
-            LOOP_DURATION.observe(time.monotonic() - _loop_start)
-
+            LOOP_DURATION.observe(loop_elapsed)
+            
             # P1.8: graceful shutdown check after each iteration
             if is_shutting_down:
                 add_event("Graceful shutdown: persisting state and exiting")
@@ -981,7 +1013,8 @@ def main():
                 save_active_trades(active_trades)
                 break
 
-            await asyncio.sleep(get_interval_seconds(args.interval))
+            add_event(f"Loop {invocation_count} complete in {loop_elapsed:.1f}s. Sleeping for {sleep_time:.1f}s")
+            await asyncio.sleep(sleep_time)
 
     async def handle_diary(request):
         """Return diary entries as JSON or newline-delimited text."""

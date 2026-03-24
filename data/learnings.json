@@ -67,19 +67,19 @@
   "market_correlations": [
     {
       "symbol": "BTC",
-      "total_trades": 10,
+      "total_trades": 6,
       "win_rate": 0.0,
       "sample_period": "last_100_trades"
     },
     {
       "symbol": "ETH",
-      "total_trades": 10,
+      "total_trades": 5,
       "win_rate": 0.0,
       "sample_period": "last_100_trades"
     },
     {
       "symbol": "BNB",
-      "total_trades": 15,
+      "total_trades": 6,
       "win_rate": 0.0,
       "sample_period": "last_100_trades"
     }

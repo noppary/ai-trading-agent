@@ -127,12 +127,13 @@ CONFIG = {
     "max_total_exposure_pct": _get_int("MAX_TOTAL_EXPOSURE_PCT", 75),
     "max_open_positions": _get_int("MAX_OPEN_POSITIONS", 3),          # P2.10: cap simultaneous positions
     "max_net_exposure_pct": _get_float("MAX_NET_EXPOSURE_PCT", 40.0), # P2.4: max net long/short as % of account
-    "max_single_trade_pct": _get_float("MAX_SINGLE_TRADE_PCT", 10.0), # P3.6: max single trade as % of account
+    "max_single_trade_pct": _get_float("MAX_SINGLE_TRADE_PCT", 20.0), # P3.6: max single trade as % of account
     "trailing_stop_enabled": _get_bool("TRAILING_STOP_ENABLED", True),  # P3.2
     "trailing_stop_atr_mult": _get_float("TRAILING_STOP_ATR_MULT", 2.0),  # P3.2: ATR multiplier for trailing SL
     "trailing_stop_activation_pct": _get_float("TRAILING_STOP_ACTIVATION_PCT", 1.0),  # P3.2: min profit % to activate
     "correlation_reduction_pct": _get_float("CORRELATION_REDUCTION_PCT", 30.0),  # P3.10: reduce allocation by this % for correlated assets
     "correlated_pairs": _get_list("CORRELATED_PAIRS", ["BTC,ETH", "BTC,SOL", "ETH,SOL"]),  # P3.10
+    "min_allocation_usd": _get_float("MIN_ALLOCATION_USD", 11.0),
     "max_leverage": _get_int("MAX_LEVERAGE", 5),
     "consecutive_failure_limit": _get_int("CONSECUTIVE_FAILURE_LIMIT", 10),
     "trade_cooldown_bars": _get_int("TRADE_COOLDOWN_BARS", 3),        # P2.5: min bars between trades per asset

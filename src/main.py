@@ -582,7 +582,7 @@ def main():
 
             try:
                 # P3.4: Run blocking LLM pipeline in a thread so aiohttp stays responsive
-                outputs = await asyncio.to_thread(agent.decide_trade, args.assets, context)
+                outputs = await asyncio.to_thread(agent.decide_trade, args.assets, context, account_value=account_value, balance=state['balance'])
                 if not isinstance(outputs, dict):
                     add_event(f"Invalid output format (expected dict): {outputs}")
                     outputs = {}
@@ -617,7 +617,7 @@ def main():
                 ])
                 context_retry = json.dumps(context_retry_payload, default=json_default)
                 try:
-                    outputs = await asyncio.to_thread(agent.decide_trade, args.assets, context_retry)
+                    outputs = await asyncio.to_thread(agent.decide_trade, args.assets, context_retry, account_value=account_value, balance=state['balance'])
                     if not isinstance(outputs, dict):
                         add_event(f"Retry invalid format: {outputs}")
                         outputs = {}
@@ -650,9 +650,18 @@ def main():
                     if action in ("buy", "sell"):
                         is_buy = action == "buy"
                         alloc_usd = float(output.get("allocation_usd", 0.0))
+
+                        # Fix 3b: Clamp allocation_usd to account-relative max before exposure check
+                        max_alloc = account_value * (CONFIG.get("max_single_trade_pct", 10.0) / 100.0) if account_value else 0
+                        if max_alloc > 0 and alloc_usd > max_alloc:
+                            add_event(f"Clamping {asset} allocation ${alloc_usd:.2f} → ${max_alloc:.2f} (pre-exposure clamp)")
+                            alloc_usd = max_alloc
+
+                        # Fix 3c: Apply minimum allocation when LLM says buy/sell but allocation is 0
+                        min_alloc = CONFIG.get("min_allocation_usd", 11.0)
                         if alloc_usd <= 0:
-                            add_event(f"Holding {asset}: zero/negative allocation")
-                            continue
+                            alloc_usd = min_alloc
+                            add_event(f"Applied minimum allocation for {asset}: ${alloc_usd:.2f} (LLM returned 0)")
 
                         # ── P2.10: Max open positions cap ──
                         max_open = CONFIG.get("max_open_positions", 3)

@@ -374,12 +374,15 @@ class TradingAgent:
                     "  Only flag oversold if RSI < 20 in a trend or RSI < 30 in ranging market\n"
                     "- In ranging: standard thresholds apply (overbought >70, oversold <30)\n"
                     "- DO NOT default to neutral/hold just because RSI is above 50\n\n"
-                    "## Anti-Stall Rule\n"
-                    "- You are part of a TRADING system, not a watching system\n"
-                    "- If the data shows clear trend alignment (EMA crossover + confirming RSI + MACD),\n"
-                    "  you MUST suggest buy or sell — do not hold in confirmed trends\n"
-                    "- Only suggest hold when there is genuine conflicting evidence across indicators\n"
-                    "- Confidence for trend-aligned signals should be >= 0.5\n\n"
+                    "## Anti-Stall Rule (MANDATORY)\n"
+                    "- You are the signal layer of a LIVE TRADING system with real money\n"
+                    "- If EMA20 > EMA50 AND price > EMA20 AND RSI 40-75: bias=long, confidence >= 0.55, suggested_action=buy\n"
+                    "- If EMA20 < EMA50 AND price < EMA20 AND RSI 25-60: bias=short, confidence >= 0.55, suggested_action=sell\n"
+                    "- Even in ranging markets: if RSI > 55 or MACD positive, lean bullish with confidence 0.35-0.5\n"
+                    "- suggested_allocation_pct MUST be > 0 when suggested_action is buy or sell (use 5-15% for moderate, 15-30% for high confidence)\n"
+                    "- Setting suggested_allocation_pct=0 with a buy/sell action is CONTRADICTORY and FORBIDDEN\n"
+                    "- Only set suggested_action=hold AND suggested_allocation_pct=0 when indicators genuinely conflict\n"
+                    "- Confidence calibration: 0.3-0.4 = weak signal, 0.4-0.6 = moderate, 0.6-0.8 = strong, 0.8+ = very strong\n\n"
                     "Rules:\n"
                     "- Require multi-timeframe confluence (5m + 4h alignment) for high confidence\n"
                     "- Counter-trend signals need extra confirmation → lower confidence\n"
@@ -421,7 +424,7 @@ class TradingAgent:
 
     # ── Stage 3: Trade Decisions (Kimi K2.5 via Together AI) ──
 
-    def _stage3_decide(self, signals: str, assets: list) -> dict:
+    def _stage3_decide(self, signals: str, assets: list, account_value: float = 0.0, balance: float = 0.0) -> dict:
         schema = {
             "type": "object",
             "properties": {
@@ -454,14 +457,19 @@ class TradingAgent:
                 {"role": "system", "content": (
                     "You are the EXECUTION LAYER of a quantitative trading system for crypto perpetual futures.\n"
                     "You receive pre-analyzed signals from upstream classifiers. Your job: make the FINAL trade decision.\n\n"
-                    f"Assets: {json.dumps(assets)}\n\n"
+                    f"Assets: {json.dumps(assets)}\n"
+                    f"Account: balance=${balance:.2f}, total_value=${account_value:.2f}\n"
+                    f"Max allocation per trade: ${account_value * 0.20:.2f} (20% of account). "
+                    f"Reasonable range: $11-${max(account_value * 0.20, 11):.0f}.\n\n"
                     "Rules:\n"
                     "1. Trust the upstream signal analysis — don't second-guess the data, focus on execution quality.\n"
                     "2. For each asset, decide: buy, sell, or hold.\n"
                     "3. Set allocation_usd based on confidence and suggested_allocation_pct from signals.\n"
-                    "   - Confidence >= 0.5: use full suggested allocation\n"
-                    "   - Confidence 0.35-0.5: use 50% of suggested allocation (reduced-size entry)\n"
-                    "   - Confidence < 0.35: hold\n"
+                    f"   allocation_usd = account_value (${account_value:.2f}) * suggested_allocation_pct / 100.\n"
+                    "   - Confidence >= 0.4: use full suggested allocation\n"
+                    "   - Confidence 0.2-0.4: use 50% of suggested allocation (reduced-size entry)\n"
+                    "   - Confidence < 0.2: hold\n"
+                    "   - allocation_usd MUST be between $11 and $" + f"{max(account_value * 0.20, 11):.0f}" + " for any buy/sell action\n"
                     "4. USE LEVERAGE: minimum 2x, maximum 10x. Reduce leverage when risk_flags are present or volatility is high.\n"
                     "5. TP/SL rules:\n"
                     "   - BUY: tp_price > current_price, sl_price < current_price\n"
@@ -469,8 +477,8 @@ class TradingAgent:
                     "   - Use signal tp_zone/sl_zone as guidance\n"
                     "6. exit_plan must include at least ONE explicit invalidation trigger + optional cooldown.\n"
                     "7. Cooldown: after opening/flipping, wait at least 3 bars before changing direction.\n"
-                    "8. If suggested_action is 'hold' and confidence < 0.35, always hold.\n"
-                    "   If confidence is 0.35-0.5, enter at HALF allocation to test the signal.\n\n"
+                    "8. If suggested_action is 'hold' and confidence < 0.2, always hold.\n"
+                    "   If confidence is 0.2-0.4, enter at HALF allocation to test the signal.\n\n"
                     "Output a JSON object with 'reasoning' (string) and 'trade_decisions' (array).\n"
                     "Each decision: {asset, action, allocation_usd, tp_price, sl_price, exit_plan, rationale}\n"
                     "Output ONLY valid JSON. No markdown, no prose outside the JSON."
@@ -540,7 +548,7 @@ class TradingAgent:
 
     # ── Public API ────────────────────────────────────────────
 
-    def decide_trade(self, assets, context) -> dict:
+    def decide_trade(self, assets, context, account_value: float = 0.0, balance: float = 0.0) -> dict:
         """Run the full 3-stage pipeline: normalize → classify → decide."""
         logging.info("═══ Pipeline start: %d assets ═══", len(assets))
 
@@ -551,7 +559,7 @@ class TradingAgent:
         signals = self._stage2_signals(normalized, assets)
 
         # Stage 3: Kimi K2.5 makes final trade decisions
-        result = self._stage3_decide(signals, assets)
+        result = self._stage3_decide(signals, assets, account_value=account_value, balance=balance)
 
         logging.info("═══ Pipeline complete ═══")
         return result

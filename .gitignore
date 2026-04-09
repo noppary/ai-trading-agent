@@ -29,3 +29,20 @@ llm_requests.log
 trading_history.log
 *.log
 diary.jsonl
+
+# Runtime state & rotated logs
+*.jsonl.*
+*.log.*
+*.log.gz
+*.log.archive.gz
+state_*.db
+state_*.db-shm
+state_*.db-wal
+circuit_state*.json
+active_trades_*.json
+trade_log_*.json
+backup-old-state/
+data/trade_history/
+data/reports/
+data/analysis_state.json
+data/learnings.json

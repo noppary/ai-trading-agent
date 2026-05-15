@@ -61,13 +61,779 @@
       "has_tp": true,
       "has_sl": true,
       "rr": null
+    },
+    {
+      "timestamp": "2026-03-24T20:01:54Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-03-25T00:01:12Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-03-25T16:43:55.974197+00:00",
+      "symbol": "BNB",
+      "outcome": "breakeven",
+      "regime": "trending_up",
+      "rsi": 63.37,
+      "confidence": "low",
+      "has_tp": true,
+      "has_sl": true,
+      "rr": null
+    },
+    {
+      "timestamp": "2026-03-26T18:58:27.789556+00:00",
+      "symbol": "ETH",
+      "outcome": "breakeven",
+      "regime": "unknown",
+      "rsi": null,
+      "confidence": "low",
+      "has_tp": true,
+      "has_sl": true,
+      "rr": null
+    },
+    {
+      "timestamp": "2026-03-26T18:58:27.790172+00:00",
+      "symbol": "BTC",
+      "outcome": "breakeven",
+      "regime": "unknown",
+      "rsi": null,
+      "confidence": "medium",
+      "has_tp": true,
+      "has_sl": true,
+      "rr": null
+    },
+    {
+      "timestamp": "2026-03-27T10:00:09.786522+00:00",
+      "symbol": "ETH",
+      "outcome": "breakeven",
+      "regime": "ranging",
+      "rsi": 10.0,
+      "confidence": "low",
+      "has_tp": true,
+      "has_sl": false,
+      "rr": null
+    },
+    {
+      "timestamp": "2026-03-27T10:00:09.802878+00:00",
+      "symbol": "ETH",
+      "outcome": "breakeven",
+      "regime": "trending_up",
+      "rsi": null,
+      "confidence": "low",
+      "has_tp": true,
+      "has_sl": false,
+      "rr": null
+    },
+    {
+      "timestamp": "2026-03-27T20:01:10Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-03-28T00:00:13Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-03-28T08:01:33Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-03-28T16:00:17Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-03-29T00:01:51Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-03-29T12:00:10Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-03-29T16:00:15Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-03-30T12:00:12Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-03-30T16:01:30Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-03-30T20:00:10Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-03-31T00:00:14Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-03-31T12:00:14Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-01T12:01:34Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-01T16:00:15Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-03T08:00:10Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-03T12:01:24Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-04T12:00:10Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-05T12:00:11Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-06T00:01:17Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-06T04:01:33Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-07T00:23:16.359707+00:00",
+      "symbol": "BTC",
+      "outcome": "breakeven",
+      "regime": "ranging",
+      "rsi": 7.0,
+      "confidence": "medium",
+      "has_tp": false,
+      "has_sl": false,
+      "rr": null
+    },
+    {
+      "timestamp": "2026-04-08T04:00:16Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-08T16:00:19Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-09T04:00:14Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-09T08:00:13Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-09T12:00:17Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-09T16:00:13Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-09T20:00:11Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-10T00:00:14Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-10T04:00:25Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-10T08:00:19Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-10T12:00:13Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-10T16:00:38Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-10T20:00:11Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-11T00:00:16Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-11T04:00:14Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-11T08:00:14Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-11T08:00:14Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "Repeated rationale (12x): 'no upstream classifier signal received. cannot execute witho...'",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-11T12:00:12Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-11T12:00:12Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "Repeated rationale (13x): 'no upstream classifier signal received. cannot execute witho...'",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-11T16:00:17Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-11T20:00:13Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-12T00:00:17Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "CRITICAL: Hold ratio 100.0% — bot is not trading at all",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-12T04:00:18Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-12T08:00:14Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-12T12:00:12Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-12T16:00:14Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-12T20:00:10Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-13T00:00:11Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-13T04:00:12Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-13T08:00:11Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-13T12:00:14Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-13T16:00:13Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-13T20:00:09Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-14T00:00:12Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-14T04:00:11Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-14T08:00:12Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-14T12:00:12Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-14T16:00:15Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-14T20:00:11Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-15T00:00:11Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-15T04:00:09Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-15T08:00:10Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-15T12:00:12Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-15T16:00:17Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-15T20:00:11Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-16T00:00:15Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-16T04:00:12Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-16T08:00:10Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-16T12:00:11Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-16T16:00:13Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-16T20:00:11Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-17T00:00:13Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-17T04:00:11Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-17T08:00:11Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-17T12:00:10Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-17T16:00:36Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-17T20:00:12Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-18T00:00:12Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-18T04:00:15Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-18T08:00:13Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-18T12:00:16Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-18T16:00:17Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-18T20:00:13Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-19T00:00:13Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-19T04:00:13Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-19T08:00:10Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-19T12:00:13Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-19T16:00:13Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-19T20:00:09Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-20T00:00:10Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-20T04:00:13Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-20T08:00:10Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-20T12:00:12Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-20T16:00:13Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-20T20:00:10Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-21T00:00:10Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-21T04:00:12Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
+    },
+    {
+      "timestamp": "2026-04-21T08:00:12Z",
+      "symbol": "ALL",
+      "action": "diary_pattern",
+      "value": "No diary entries found",
+      "approved_by": "self_improve"
     }
   ],
   "strategy_changes": [],
   "market_correlations": [
     {
       "symbol": "BTC",
-      "total_trades": 6,
+      "total_trades": 9,
       "win_rate": 0.0,
       "sample_period": "last_100_trades"
     },
@@ -79,7 +845,7 @@
     },
     {
       "symbol": "BNB",
-      "total_trades": 6,
+      "total_trades": 4,
       "win_rate": 0.0,
       "sample_period": "last_100_trades"
     }

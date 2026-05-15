@@ -39,6 +39,10 @@ class TradingAgent:
         self.minimax_key = CONFIG.get("minimax_api_key")
         self.minimax_url = CONFIG.get("minimax_base_url")
 
+        # Xiaomi MiMo (Direct)
+        self.mimo_key = CONFIG.get("mimo_api_key")
+        self.mimo_url = CONFIG.get("mimo_base_url")
+
         # P2.8: Per-stage latency tracking (keep last 20 per stage for p95)
         self._latency: dict[str, deque] = {
             "stage1": deque(maxlen=20),
@@ -123,6 +127,8 @@ class TradingAgent:
             return self._post_together
         if provider == "minimax":
             return self._post_minimax
+        if provider == "mimo":
+            return self._post_mimo
         raise ValueError(f"Unsupported provider: {provider}")
 
     def _post_openrouter(self, payload: dict) -> dict:
@@ -190,6 +196,21 @@ class TradingAgent:
             raise RuntimeError(f"MiniMax API error: {err_msg}")
 
         return data
+
+    def _post_mimo(self, payload: dict) -> dict:
+        if not self.mimo_key:
+            raise RuntimeError("MIMO_API_KEY not set — required for MiMo provider")
+        headers = {
+            "api-key": self.mimo_key,
+            "Content-Type": "application/json",
+        }
+        model = payload.get("model", "?")
+        logging.info("Stage request → Xiaomi MiMo Direct (%s)", model)
+        self._log_request(model, payload)
+
+        resp = requests.post(self.mimo_url, headers=headers, json=payload, timeout=60)
+        resp.raise_for_status()
+        return resp.json()
 
     def _post_stage3(self, payload: dict) -> dict:
         """P2.7: Try primary provider, then fallback chain before giving up."""

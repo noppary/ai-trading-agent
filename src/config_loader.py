@@ -97,6 +97,9 @@ CONFIG = {
     # MiniMax API (Direct)
     "minimax_api_key": _get_env("MINIMAX_API_KEY"),
     "minimax_base_url": _get_env("MINIMAX_BASE_URL", "https://api.minimax.io/v1/text/chatcompletion_v2"),
+    # Xiaomi MiMo API (Direct)
+    "mimo_api_key": _get_env("MIMO_API_KEY"),
+    "mimo_base_url": _get_env("MIMO_BASE_URL", "https://api.xiaomimimo.com/v1/chat/completions"),
     # Multi-model pipeline
     "stage1_model": _get_env("STAGE1_MODEL", "qwen/qwen3-8b"),            # Parse + normalize ($0.05/M)
     "stage1_provider": _get_env("STAGE1_PROVIDER", "openrouter"),
